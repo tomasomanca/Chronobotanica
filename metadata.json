@@ -1,0 +1,5 @@
+{
+  "name": "Digital Garden",
+  "description": "A high-performance computational art piece simulating a phototropic digital garden using Cellular Automata and Three.js InstancedMesh.",
+  "requestFramePermissions": []
+}
