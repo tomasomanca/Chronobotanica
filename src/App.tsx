@@ -124,15 +124,16 @@ const App: React.FC = () => {
           Back to Present
         </button>
 
-        {/* END OF THE WORLD Button */}
+        {/* END OF THE WORLD Button (Temporarily Disabled) */}
         <button
+          disabled={true}
           onClick={async () => {
             // DIRECT EXECUTION - NO CONFIRMATION
             const { error } = await import('./supabaseClient').then(m => m.supabase.from('plants').delete().neq('id', 0));
             if (error) console.error("Wipe failed", error);
             else window.location.reload();
           }}
-          className="w-48 text-center border border-fuchsia-400 px-6 py-2 text-[10px] uppercase tracking-widest transition-colors duration-300 rounded-none bg-fuchsia-900/50 text-fuchsia-200 hover:bg-fuchsia-400 hover:text-black mt-4"
+          className="w-48 text-center border border-fuchsia-400/30 px-6 py-2 text-[10px] uppercase tracking-widest rounded-none bg-fuchsia-900/20 text-fuchsia-200/30 cursor-not-allowed mt-4"
         >
           End of the World
         </button>
