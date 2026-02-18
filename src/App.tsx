@@ -199,7 +199,7 @@ const App: React.FC = () => {
       {/* MOBILE ACTIONS TRIGGER (Visible on Mobile) */}
       <button
         onClick={() => setIsMobileMenuOpen(true)}
-        className="md:hidden absolute top-8 right-8 z-30 border-none text-[10px] uppercase tracking-widest text-white hover:text-green-400 transition-colors pointer-events-auto font-teletext bg-transparent p-0"
+        className="md:hidden absolute top-8 right-8 z-30 border-none text-[10px] uppercase tracking-widest text-white transition-colors pointer-events-auto font-teletext bg-transparent p-0"
       >
         Actions
       </button>
@@ -210,7 +210,7 @@ const App: React.FC = () => {
           {/* BACK TO GARDEN (Close) */}
           <button
             onClick={() => setIsMobileMenuOpen(false)}
-            className="absolute top-8 right-8 border-none text-[10px] uppercase tracking-widest text-white hover:text-green-400 transition-colors pointer-events-auto"
+            className="absolute top-8 right-8 border-none text-[10px] uppercase tracking-widest text-white transition-colors pointer-events-auto"
           >
             ← Back to Garden
           </button>
