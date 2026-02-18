@@ -97,14 +97,13 @@ export class Garden {
         }
     }
 
-    private createCell(index: number, x: number, y: number, z: number, type: CellType, plantId: number | null, dna: string, genotype: Genotype) {
-        // ... (existing code)
+    private createCell(index: number, x: number, y: number, z: number, type: CellType, plantId: number | null, dna: string, genotype: Genotype, birthTime?: number | string | Date) {
         // If overwriting, decrement old type
         if (this.grid.has(index)) {
             this.updateCellCount(this.grid.get(index)!.type, -1);
         }
 
-        const now = new Date();
+        const now = birthTime ? new Date(birthTime) : new Date();
         const date = `${now.getDate().toString().padStart(2, '0')}.${(now.getMonth() + 1).toString().padStart(2, '0')}.${now.getFullYear().toString().slice(-2)}`;
         const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
         const timeStr = `${date} · ${time}`;
@@ -213,14 +212,14 @@ export class Garden {
         });
     }
 
-    private initializePlantAt(index: number, x: number, y: number, z: number, dna: string) {
+    private initializePlantAt(index: number, x: number, y: number, z: number, dna: string, birthTime?: string) {
         this.plantCounter++;
         this.uniqueSpeciesSet.add(dna); // Track unique species
         const genotype = this.parseDNA(dna);
 
         this.registerPlant(this.plantCounter, genotype, dna);
 
-        this.createCell(index, x, y, z, CellType.STEM, this.plantCounter, dna, genotype);
+        this.createCell(index, x, y, z, CellType.STEM, this.plantCounter, dna, genotype, birthTime);
 
         const cell = this.grid.get(index)!;
         cell.isTip = true;
@@ -662,22 +661,22 @@ export class Garden {
             const ageHours = ageMs / (1000 * 60 * 60);
 
             if (record.status === 'ash' || ageHours > 24) {
-                this.spawnAshOnly(record);
+                this.spawnAshOnly(record, record.created_at);
                 continue;
             }
 
             const idx = this.getIndex(record.x, 0, record.z);
             if (idx === -1 || this.grid.has(idx)) continue;
 
-            this.initializePlantAt(idx, record.x, 0, record.z, record.dna);
+            this.initializePlantAt(idx, record.x, 0, record.z, record.dna, record.created_at);
         }
     }
 
-    private spawnAshOnly(record: { dna: string, x: number, z: number }) {
+    private spawnAshOnly(record: { dna: string, x: number, z: number }, birthTime?: string) {
         const idx = this.getIndex(record.x, 0, record.z);
         if (idx !== -1 && !this.grid.has(idx)) {
             const genotype = this.parseDNA(record.dna);
-            this.createCell(idx, record.x, 0, record.z, CellType.ASH, null, record.dna, genotype);
+            this.createCell(idx, record.x, 0, record.z, CellType.ASH, null, record.dna, genotype, birthTime);
         }
     }
 
