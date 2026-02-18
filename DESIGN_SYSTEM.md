@@ -30,14 +30,15 @@ Chronobotanica uses a high-contrast, minimalist aesthetic that blends retro-tele
 
 ## UI Components
 
-### 1. Flow of Time Controller
-A custom narrative slider located in the top-right corner.
-- **Positions**:
-  - `Stop`: `timeScale = 0` (Paused)
-  - `Day`: `timeScale = 1` (Real-time, 24h cycle)
-  - `Hour`: `timeScale = 24`
-  - `Minute`: `timeScale = 1440`
-  - `Second`: `timeScale = 86400` (Max speed)
+### 1. Temporal Controls (Top-Right)
+A set of high-impact buttons manipulating the simulation speed.
+- **Time Travel**: `bg-black` -> `bg-white`. Accelerates time to 86,400x speed (1 Day/Sec).
+- **Back to Present**: Resets time scale to 1.0 and reloads database state.
+- **End of the World**: `border-fuchsia-400`. Destructive action with distinct danger-color styling.
+
+### 2. Camera & Recording (Bottom-Right)
+- **Capture**: Snapshots the current WebGL canvas to PNG.
+- **Record**: Captures a `.webm` video clip of the simulation.
 
 ### 2. Stats Panel
 A minimalist grid (2 columns) in the bottom-left corner.
