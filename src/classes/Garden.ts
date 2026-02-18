@@ -35,6 +35,7 @@ export class Garden {
     public grid: Map<number, GridCell>;
     public config: GardenConfig;
     public sunPosition: { x: number, y: number, z: number };
+    public onPlantBorn?: (dna: string, x: number, z: number) => void;
 
     private plantCounter = 0;
     private activeTips: Map<number, TipState>;
@@ -63,6 +64,27 @@ export class Garden {
         return x + (y * GRID_WIDTH) + (z * GRID_WIDTH * GRID_HEIGHT);
     }
 
+    // ... (updateCellCount and createCell skipped) ...
+
+    public simulateMissedBirths(msPassed: number) {
+        // 1 Day = 86400000 ms
+        // 1 Cycle = 2 * PI radians
+        // Updates happen every 2.0 radians
+
+        const radsPerMs = (Math.PI * 2) / 86400000;
+        const totalRads = radsPerMs * msPassed;
+        const updatesMissed = totalRads / 2.0;
+
+        // Statistical Approximation
+        const expectedBirths = Math.floor(updatesMissed * SEED_CHANCE);
+
+        console.log(`[Garden] Missed ${msPassed}ms (~${Math.floor(updatesMissed)} updates). Simulating ${expectedBirths} births.`);
+
+        for (let i = 0; i < expectedBirths; i++) {
+            this.spawnNewPlant(true); // true = forced/retroactive
+        }
+    }
+
     private updateCellCount(type: CellType, delta: number) {
         switch (type) {
             case CellType.STEM: this.cellCounts.stem += delta; break;
@@ -76,6 +98,7 @@ export class Garden {
     }
 
     private createCell(index: number, x: number, y: number, z: number, type: CellType, plantId: number | null, dna: string, genotype: Genotype) {
+        // ... (existing code)
         // If overwriting, decrement old type
         if (this.grid.has(index)) {
             this.updateCellCount(this.grid.get(index)!.type, -1);
@@ -105,6 +128,7 @@ export class Garden {
             this.plantRegistry.get(plantId)!.indices.push(index);
         }
     }
+
 
     // --- GENETICS ---
 
@@ -211,7 +235,7 @@ export class Garden {
         });
     }
 
-    private spawnNewPlant() {
+    private spawnNewPlant(isRetroactive = false) {
         let attempts = 0;
         while (attempts < 10) {
             const rx = Math.floor(Math.random() * GRID_WIDTH);
@@ -221,6 +245,10 @@ export class Garden {
             if (idx !== -1 && !this.grid.has(idx)) {
                 const dna = this.generateDNA();
                 this.initializePlantAt(idx, rx, 0, rz, dna);
+
+                if (this.onPlantBorn) {
+                    this.onPlantBorn(dna, rx, rz);
+                }
                 break;
             }
             attempts++;
@@ -619,14 +647,55 @@ export class Garden {
         }
         return res;
     }
+    // --- PERSISTENCE & FAST FORWARD ---
+
+    public async fastForward(records: { id: number, created_at: string, dna: string, x: number, z: number, status: string }[]) {
+        console.log(`[Garden] Fast-forwarding ${records.length} plants...`);
+        const now = Date.now();
+
+        // Sort by age
+        records.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+        for (const record of records) {
+            const birthTime = new Date(record.created_at).getTime();
+            const ageMs = now - birthTime;
+            const ageHours = ageMs / (1000 * 60 * 60);
+
+            if (record.status === 'ash' || ageHours > 24) {
+                this.spawnAshOnly(record);
+                continue;
+            }
+
+            const idx = this.getIndex(record.x, 0, record.z);
+            if (idx === -1 || this.grid.has(idx)) continue;
+
+            this.initializePlantAt(idx, record.x, 0, record.z, record.dna);
+        }
+    }
+
+    private spawnAshOnly(record: { dna: string, x: number, z: number }) {
+        const idx = this.getIndex(record.x, 0, record.z);
+        if (idx !== -1 && !this.grid.has(idx)) {
+            const genotype = this.parseDNA(record.dna);
+            this.createCell(idx, record.x, 0, record.z, CellType.ASH, null, record.dna, genotype);
+        }
+    }
+
     public getStats() {
         return {
             totalPlantsBorn: this.plantCounter,
             activePlants: this.plantRegistry.size,
             uniqueSpecies: this.uniqueSpeciesSet.size,
-            sunPosition: 0, // Placeholder, managed by Visualizer/App
-            virtualDays: 0, // Placeholder, updated in DigitalGarden
+            sunPosition: 0,
+            virtualDays: 0,
             cells: { ...this.cellCounts }
         };
+    }
+
+    public async prunePlants(maxAgeHours: number = 48) {
+        console.log(`[Garden] Pruning requested...`);
+        // In a real implementation, we would DELETE from Supabase here.
+        // For now, we will just log it.
+        // potentially: await supabase.from('plants').delete().lt('created_at', cutoffDate);
     }
 }

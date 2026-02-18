@@ -13,6 +13,10 @@ const App: React.FC = () => {
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const chunksRef = React.useRef<Blob[]>([]);
 
+  // Debug state for Raycast
+  const [debugHits, setDebugHits] = useState(0);
+  const [debugInstanceId, setDebugInstanceId] = useState<number | undefined>(undefined);
+
   useEffect(() => {
     const timer = setInterval(() => {
       const now = new Date();
@@ -24,6 +28,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleHover = (cell: GridCell | null, x: number, y: number) => {
+    // console.log("App handleHover:", cell?.type, x, y);
     setHoverInfo(cell);
     setCursorPos({ x, y });
   };
@@ -55,6 +60,11 @@ const App: React.FC = () => {
           onHover={handleHover}
           onSunUpdate={setSunProgress}
           onDebugStats={setStats}
+        // onDebugRay={(hits, instanceId, totalInstances) => {
+        //   setDebugHits(hits);
+        //   setDebugInstanceId(instanceId);
+        //   setStats(prev => prev ? ({ ...prev, activePlants: totalInstances || 0 }) : null); // HACK: Update ActivePlants stat for verifying
+        // }}
         />
       </div>
 
@@ -90,32 +100,96 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Time Control (Top-Right) */}
-      <div className="absolute top-8 right-8 z-20 flex flex-col items-end gap-3 pointer-events-auto font-teletext">
-        <h1 className="text-[10px] tracking-[0.2em] text-zinc-400 uppercase mb-2">Flow of Time</h1>
-        <div className="flex flex-row w-56 justify-between">
-          {[
-            { label: "Stop", value: 0 },
-            { label: "Day", value: 1 },
-            { label: "Hour", value: 24 },
-            { label: "Minute", value: 1440 },
-            { label: "Second", value: 86400 }
-          ].map((item) => (
-            <button
-              key={item.label}
-              onClick={() => setTimeScale(item.value)}
-              className="flex flex-col items-center gap-2 w-8 group"
-            >
-              <span className={`text-[8px] uppercase tracking-widest ${timeScale === item.value ? 'text-white' : 'text-zinc-500 group-hover:text-zinc-300'}`}>
-                {item.label}
-              </span>
-              <div
-                className={`w-2 h-2 border border-white transition-all duration-300 ${timeScale === item.value ? 'bg-white' : 'bg-black'}`}
-              />
-            </button>
-          ))}
-        </div>
+      {/* NEW BUTTONS GROUP (Top-Right) */}
+      <div className="absolute top-8 right-8 z-30 flex flex-col gap-3 items-end pointer-events-auto font-teletext">
+
+        {/* Time Travel Button */}
+        <button
+          onClick={() => setTimeScale(86400)} // 1 Day = 1 Second
+          className={`w-48 text-center border border-white px-6 py-2 text-[10px] uppercase tracking-widest transition-colors duration-300 rounded-none ${timeScale === 86400
+            ? 'bg-white text-black'
+            : 'bg-black text-white hover:bg-white hover:text-black'}`}
+        >
+          Time Travel
+        </button>
+
+        {/* Back to Present Button */}
+        <button
+          onClick={() => {
+            setTimeScale(1.0);
+            window.location.reload(); // Reload to sync with DB
+          }}
+          className="w-48 text-center border border-white px-6 py-2 text-[10px] uppercase tracking-widest transition-colors duration-300 rounded-none bg-black text-white hover:bg-white hover:text-black"
+        >
+          Back to Present
+        </button>
+
+        {/* END OF THE WORLD Button */}
+        <button
+          onClick={async () => {
+            // DIRECT EXECUTION - NO CONFIRMATION
+            const { error } = await import('./supabaseClient').then(m => m.supabase.from('plants').delete().neq('id', 0));
+            if (error) console.error("Wipe failed", error);
+            else window.location.reload();
+          }}
+          className="w-48 text-center border border-fuchsia-400 px-6 py-2 text-[10px] uppercase tracking-widest transition-colors duration-300 rounded-none bg-fuchsia-900/50 text-fuchsia-200 hover:bg-fuchsia-400 hover:text-black mt-4"
+        >
+          End of the World
+        </button>
+
       </div>
+
+      {/* Capture Button (Bottom-Right) */}
+      <button
+        onClick={() => {
+          const canvas = document.querySelector('canvas');
+          if (canvas) {
+            const dataURL = canvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.download = `chronobotanica-${Date.now()}.png`;
+            link.href = dataURL;
+            link.click();
+          }
+        }}
+        className="absolute bottom-8 right-8 z-30 w-48 text-center bg-black text-white border border-white px-6 py-2 text-[10px] uppercase tracking-widest hover:bg-white hover:text-black transition-colors duration-300 font-teletext rounded-none"
+      >
+        Capture a moment
+      </button>
+
+      {/* Record Button (Bottom-Right, stacked above Capture) */}
+      <button
+        onClick={() => {
+          if (isRecording) {
+            if (mediaRecorderRef.current?.state !== 'inactive') {
+              mediaRecorderRef.current?.stop();
+              setIsRecording(false);
+            }
+          } else {
+            const canvas = document.querySelector('canvas');
+            if (canvas) {
+              const stream = canvas.captureStream(30);
+              const recorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+              chunksRef.current = [];
+              recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+              recorder.onstop = () => {
+                const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.download = `chronobotanica-clip-${Date.now()}.webm`;
+                link.href = url;
+                link.click();
+                URL.revokeObjectURL(url);
+              };
+              recorder.start();
+              mediaRecorderRef.current = recorder;
+              setIsRecording(true);
+            }
+          }
+        }}
+        className={`absolute bottom-20 right-8 z-30 w-48 text-center border border-white px-6 py-2 text-[10px] uppercase tracking-widest transition-colors duration-300 font-teletext rounded-none ${isRecording ? 'bg-white text-black' : 'bg-black text-white hover:bg-white hover:text-black'}`}
+      >
+        {isRecording ? "Stop Recording" : "Record a few moments"}
+      </button>
 
       {/* Stats Panel (Bottom-Left) */}
       <div className="absolute bottom-8 left-8 z-20 flex flex-row gap-12 pointer-events-none font-teletext text-zinc-500 text-[10px] tracking-widest leading-loose">
@@ -123,7 +197,7 @@ const App: React.FC = () => {
         {/* Column 1: Time & Global Stats */}
         <div className="flex flex-col gap-6">
           <div className="flex flex-col gap-0.5 text-zinc-400">
-            <div>DATE <span className="text-white ml-4">{currentTime.split('·')[0].trim()}</span></div>
+            <div>DATE <span className="text-white ml-4">{currentTime.split('·')[0]?.trim()}</span></div>
             <div>TIME <span className="text-white ml-4">{currentTime.split('·')[1]?.trim()}</span></div>
             <div className="mt-2 text-white">VIRTUAL DAYS <span className="text-zinc-300 ml-4">{stats?.virtualDays || 0}</span></div>
           </div>
@@ -144,12 +218,10 @@ const App: React.FC = () => {
           <div className="text-zinc-300">GENOMA <span className="text-white ml-4">{stats?.cells.ash || 0}</span></div>
         </div>
       </div>
-
       {/* Ethereal Floating Tooltip */}
-      {/* FIX 3: pointer-events-none ensures rays pass through text */}
       {hoverInfo && hoverInfo.type !== CellType.EMPTY && (
         <div
-          className="fixed z-30 pointer-events-none flex flex-col gap-0.5 font-teletext"
+          className="fixed z-50 pointer-events-none flex flex-col gap-0.5 font-teletext"
           style={{
             left: cursorPos.x,
             top: cursorPos.y,
@@ -169,77 +241,6 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
-
-
-      <button
-        onClick={() => {
-          const canvas = document.querySelector('canvas');
-          if (canvas) {
-            const dataURL = canvas.toDataURL('image/png');
-            const link = document.createElement('a');
-            const now = new Date();
-            const dateStr = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}`;
-            const timeStr = `${now.getHours().toString().padStart(2, '0')}-${now.getMinutes().toString().padStart(2, '0')}-${now.getSeconds().toString().padStart(2, '0')}`;
-            link.download = `chronobotanica-${dateStr}-${timeStr}.png`;
-            link.href = dataURL;
-            link.click();
-          }
-        }}
-        className="absolute bottom-8 right-8 z-30 w-48 text-center bg-black text-white border border-white px-6 py-2 text-[10px] uppercase tracking-widest hover:bg-white hover:text-black transition-colors duration-300 font-teletext rounded-none"
-      >
-        Capture a moment
-      </button>
-
-      {/* Record Button (Bottom-Right, stacked above Capture) */}
-      <button
-        onClick={() => {
-          if (isRecording) {
-            // Stop Recording
-            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-              mediaRecorderRef.current.stop();
-              setIsRecording(false);
-            }
-          } else {
-            // Start Recording
-            const canvas = document.querySelector('canvas');
-            if (canvas) {
-              const stream = canvas.captureStream(30); // 30 FPS
-              const recorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
-
-              chunksRef.current = [];
-
-              recorder.ondataavailable = (e) => {
-                if (e.data.size > 0) {
-                  chunksRef.current.push(e.data);
-                }
-              };
-
-              recorder.onstop = () => {
-                const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                const now = new Date();
-                const dateStr = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}`;
-                const timeStr = `${now.getHours().toString().padStart(2, '0')}-${now.getMinutes().toString().padStart(2, '0')}-${now.getSeconds().toString().padStart(2, '0')}`;
-                link.download = `chronobotanica-clip-${dateStr}-${timeStr}.webm`;
-                link.href = url;
-                link.click();
-                URL.revokeObjectURL(url);
-              };
-
-              recorder.start();
-              mediaRecorderRef.current = recorder;
-              setIsRecording(true);
-            }
-          }
-        }}
-        className={`absolute bottom-20 right-8 z-30 w-48 text-center border border-white px-6 py-2 text-[10px] uppercase tracking-widest transition-colors duration-300 font-teletext rounded-none ${isRecording
-          ? 'bg-white text-black'
-          : 'bg-black text-white hover:bg-white hover:text-black'
-          }`}
-      >
-        {isRecording ? "Stop Recording" : "Record a few moments"}
-      </button>
 
     </div>
   );

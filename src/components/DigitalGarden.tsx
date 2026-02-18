@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import { Garden } from '../classes/Garden';
 import { Visualizer } from '../classes/Visualizer';
 import { GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH } from '../constants';
-import { GridCell, GardenStats } from '../types';
+import { GridCell, GardenStats, PlantRecord } from '../types';
+import { supabase } from '../supabaseClient';
 
 interface DigitalGardenProps {
   timeScale: number;
@@ -12,6 +13,7 @@ interface DigitalGardenProps {
 }
 
 const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSunUpdate, onDebugStats }) => {
+  // ... (refs state same)
   const containerRef = useRef<HTMLDivElement>(null);
   const gardenRef = useRef<Garden | null>(null);
   const visualizerRef = useRef<Visualizer | null>(null);
@@ -22,14 +24,11 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
   const gardenAccumulatorRef = useRef<number>(0);
 
   useEffect(() => {
-    // 1. Sync Initial Sun Position with Real Time
+    // ... (initialization same)
     const now = new Date();
     const secondsSinceMidnight = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-    const dayProgress = secondsSinceMidnight / 86400; // 0.0 to 1.0
+    const dayProgress = secondsSinceMidnight / 86400;
 
-    // Map: Midnight (0.0) -> PI/2 (0.25 of cycle so Y=-130)
-    //      Noon (0.5) -> 3PI/2 (0.75 of cycle so Y=130)
-    // Formula: (Progress * 2PI) + PI/2
     const initialPhase = (dayProgress * Math.PI * 2) + (Math.PI / 2);
     sunTimerRef.current = initialPhase;
 
@@ -42,11 +41,53 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
       sunPosition: { x: 50, y: 110, z: 50 },
       growthRate: 1.0
     });
-    garden.seed(1);
     gardenRef.current = garden;
 
     const visualizer = new Visualizer(containerRef.current);
     visualizerRef.current = visualizer;
+
+    // ... (rest of useEffect same)
+
+    // --- SUPABASE LOAD ---
+    const loadPlants = async () => {
+      const { data, error } = await supabase
+        .from('plants')
+        .select('*')
+        .order('created_at', { ascending: true }); // Get oldest first!
+
+      if (error) {
+        console.error('Error loading plants:', error);
+        garden.seed(1);
+      } else if (data && data.length > 0) {
+        const records = data as unknown as PlantRecord[];
+        await garden.fastForward(records);
+
+        // CALCULATE MISSED BIRTHS
+        const lastPlant = records[records.length - 1];
+        const lastTime = new Date(lastPlant.created_at).getTime();
+        const now = Date.now();
+        const timeDiff = now - lastTime;
+
+        if (timeDiff > 0) {
+          garden.simulateMissedBirths(timeDiff);
+        }
+      } else {
+        garden.seed(1);
+      }
+    };
+
+    garden.onPlantBorn = (dna, x, z) => {
+      supabase.from('plants').insert({
+        dna,
+        x,
+        z
+      }).then(({ error }) => {
+        if (error) console.error("Failed to save seed:", error);
+      });
+    };
+
+    loadPlants();
+    // ---------------------
 
     const handleResize = () => {
       if (containerRef.current && visualizerRef.current) {
@@ -71,6 +112,7 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
   }, [timeScale]);
 
   const loop = useCallback((time: number) => {
+    // ... (loop logic same)
     if (lastTimeRef.current === 0) {
       lastTimeRef.current = time;
     }
@@ -79,35 +121,21 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
 
     frameRef.current++;
 
-    // Real-Time Speed Calculation
-    // 1 Day = 86400 Seconds = 86400000 ms
-    // 1 Cycle = 2 * PI radians
-    // Radians per ms = (2 * PI) / 86400000
     const radPerMs = (Math.PI * 2) / 86400000;
-
-    // Update Sun
     const sunDelta = radPerMs * delta * timeScale;
     sunTimerRef.current += sunDelta;
 
-    // UI Update
     const cycle = sunTimerRef.current % (Math.PI * 2);
     onSunUpdate(cycle / (Math.PI * 2));
 
-    // Orbital Mechanics: Midnight @ 25% (PI/2), Noon @ 75% (3PI/2)
     const sunY = -130 * Math.sin(sunTimerRef.current);
     const sunX = 50 + 130 * Math.cos(sunTimerRef.current);
     const sunZ = 50;
-
     const intensity = Math.max(0, (sunY / 130) * 1800.0);
 
     if (gardenRef.current && visualizerRef.current) {
       gardenRef.current.sunPosition = { x: sunX, y: sunY, z: sunZ };
       visualizerRef.current.updateSunPosition(sunX, sunY, sunZ, intensity);
-
-      // GARDEN UPDATE CORRELATION
-      // Original Logic: Sun moved 0.0005 rads/frame. Update every 4000 frames.
-      // Ratio: 1 Update per (0.0005 * 4000) = 2.0 Radians.
-      // We must preserve this exact ratio to maintain "slow growth" correlation.
 
       gardenAccumulatorRef.current += sunDelta;
       const RADS_PER_UPDATE = 2.0;
@@ -120,7 +148,6 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
       visualizerRef.current.update(gardenRef.current);
     }
 
-    // Stats
     if (onDebugStats && frameRef.current % 10 === 0) {
       const stats = gardenRef.current.getStats();
       const degrees = Math.round((cycle / (Math.PI * 2)) * 360) % 360;

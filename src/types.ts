@@ -67,3 +67,12 @@ export interface GardenStats {
     ash: number;
   };
 }
+
+export interface PlantRecord {
+  id: number;
+  created_at: string;
+  dna: string;
+  x: number;
+  z: number;
+  status: 'alive' | 'ash';
+}

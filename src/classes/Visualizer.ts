@@ -115,8 +115,16 @@ export class Visualizer {
     this.dummy = new THREE.Object3D();
     this.raycaster = new THREE.Raycaster();
 
-    // FIX 2: Tolerance for easier selection
-    // Casting to any because standard Three types might not strictly define params.Mesh
+    // FIX: Set bounding sphere AND box once, covering the whole world
+    // Raycaster uses these to permit checking instances.
+    const center = new THREE.Vector3(50, 50, 50);
+    const radius = 100;
+    this.plantMesh.geometry.boundingSphere = new THREE.Sphere(center, radius);
+    this.plantMesh.geometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(100, 100, 100)
+    );
+
     (this.raycaster.params as any).Mesh = { threshold: 0.1 };
 
     this.mouse = new THREE.Vector2(-1, -1);
@@ -146,7 +154,7 @@ export class Visualizer {
     let plantIndex = 0;
     this.instanceIdToKey = []; // Reset mapping array
 
-    // FIX 3: Iterate over entries to get the Map Key (Grid Index) directly
+    // Iterate over entries to get the Map Key (Grid Index) directly
     for (const [key, cell] of garden.grid) {
       if (cell.type === CellType.SUN) {
         continue;
@@ -185,14 +193,6 @@ export class Visualizer {
     this.plantMesh.instanceMatrix.needsUpdate = true;
     if (this.plantMesh.instanceColor) this.plantMesh.instanceColor.needsUpdate = true;
 
-    // FIX 4: Manually force bounding sphere to cover the entire grid
-    // This solves the bug where raycasting misses instances because the base geometry's bounds are too small.
-    if (!this.plantMesh.geometry.boundingSphere) {
-      this.plantMesh.geometry.boundingSphere = new THREE.Sphere();
-    }
-    // 100x100x100 grid centered at 50,50,50 with radius covering it
-    this.plantMesh.geometry.boundingSphere.set(new THREE.Vector3(50, 50, 50), 100);
-
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
   }
@@ -204,13 +204,37 @@ export class Visualizer {
 
     this.raycaster.setFromCamera(this.mouse, this.camera);
 
-    const intersectPlants = this.raycaster.intersectObject(this.plantMesh);
-    if (intersectPlants.length > 0) {
-      const targetInstanceId = intersectPlants[0].instanceId;
+    // MANUAL RAYCAST STRATEGY
+    // Since InstancedMesh native raycast is failing, we iterate manually.
+    // Efficiency: O(N) where N is instance count. Fine for < 1000 plants visible. 
+    // Optimizations (BVH) can be added if we exceed 10k active plants.
 
-      if (targetInstanceId !== undefined && this.instanceIdToKey[targetInstanceId] !== undefined) {
-        return this.instanceIdToKey[targetInstanceId];
+    const instanceMatrix = new THREE.Matrix4();
+    const boxGeometry = new THREE.Box3(
+      new THREE.Vector3(-CELL_SIZE / 2, -CELL_SIZE / 2, -CELL_SIZE / 2),
+      new THREE.Vector3(CELL_SIZE / 2, CELL_SIZE / 2, CELL_SIZE / 2)
+    );
+    const worldBox = new THREE.Box3();
+    let closestDist = Infinity;
+    let hitInstanceId: number | undefined = undefined;
+
+    for (let i = 0; i < this.plantMesh.count; i++) {
+      this.plantMesh.getMatrixAt(i, instanceMatrix);
+      worldBox.copy(boxGeometry).applyMatrix4(instanceMatrix);
+
+      const intersection = this.raycaster.ray.intersectBox(worldBox, new THREE.Vector3());
+
+      if (intersection) {
+        const dist = intersection.distanceTo(this.raycaster.ray.origin);
+        if (dist < closestDist) {
+          closestDist = dist;
+          hitInstanceId = i;
+        }
       }
+    }
+
+    if (hitInstanceId !== undefined && this.instanceIdToKey[hitInstanceId] !== undefined) {
+      return this.instanceIdToKey[hitInstanceId];
     }
     return null;
   }
