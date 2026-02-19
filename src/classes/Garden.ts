@@ -59,14 +59,24 @@ export class Garden {
         this.sunPosition = { x: 50, y: 110, z: 50 };
     }
 
+    private simulationTime: number | null = null;
+
+    private get timeNow(): number {
+        return this.simulationTime || Date.now();
+    }
+
     public getIndex(x: number, y: number, z: number): number {
         if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT || z < 0 || z >= GRID_DEPTH) return -1;
         return x + (y * GRID_WIDTH) + (z * GRID_WIDTH * GRID_HEIGHT);
     }
 
     // New helper to perform a single simulation tick without visualization or async delays
-    private performTick(updates: number) {
+    private performTick(updates: number, stepMs: number = 0) {
         for (let i = 0; i < updates; i++) {
+            if (this.simulationTime !== null) {
+                this.simulationTime += stepMs;
+            }
+
             // 1. Spontaneous Seeding (Only if growthRate > 0)
             if (this.config.growthRate > 0 && Math.random() < SEED_CHANCE) {
                 this.spawnNewPlant();
@@ -154,7 +164,7 @@ export class Garden {
             this.updateCellCount(this.grid.get(index)!.type, -1);
         }
 
-        const now = birthTime ? new Date(birthTime) : new Date();
+        const now = birthTime ? new Date(birthTime) : new Date(this.timeNow);
         const date = `${now.getDate().toString().padStart(2, '0')}.${(now.getMonth() + 1).toString().padStart(2, '0')}.${now.getFullYear().toString().slice(-2)}`;
         const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
         const timeStr = `${date} · ${time}`;
@@ -711,6 +721,7 @@ export class Garden {
         this.config.growthRate = 0;
 
         let currentTime = new Date(records[0].created_at).getTime();
+        this.simulationTime = currentTime;
 
         // 1. Initialize First Plant
         const first = records[0];
@@ -733,6 +744,8 @@ export class Garden {
                 this.catchUpTime(deltaMs);
             }
 
+            this.simulationTime = nextTime; // Sync exact time for next spawn
+
             // Spawn next plant
             if (nextRecord.status === 'ash') {
                 this.spawnAshOnly(nextRecord, nextRecord.created_at);
@@ -754,6 +767,7 @@ export class Garden {
 
         // Restore configuration
         this.config.growthRate = originalGrowthRate;
+        this.simulationTime = null; // Return to real-time
         console.log(`[Garden] Replay complete.`);
     }
 
@@ -762,11 +776,12 @@ export class Garden {
         // 1 tick = 2.0 radians of sun movement
         // Sun moves 2PI in 24h (86400000ms)
         const radsPerMs = (Math.PI * 2) / 86400000;
-        const totalRads = radsPerMs * ms;
-        const updates = Math.floor(totalRads / 2.0);
+        const msPerUpdate = 2.0 / radsPerMs;
+
+        const updates = Math.floor(ms / msPerUpdate);
 
         if (updates > 0) {
-            this.performTick(updates);
+            this.performTick(updates, msPerUpdate);
         }
     }
 

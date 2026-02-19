@@ -12,6 +12,7 @@ Chronobotanica is a digital garden simulation exploring the intersection of biol
 ### Temporal Control
 - **Time Travel**: A specialized mode where time accelerates to **1 Day per Second**, allowing users to witness generations of evolution in moments.
 - **Back to Present**: Instantly snaps the simulation back to the user's local real-time and re-syncs with the database.
+- **Retroactive Growth**: Plants continue to grow even when the application is closed. Upon return, the garden simulates the passage of time, instantly aging plants to their correct state.
 - **End of the World**: A destructive event that wipes the database, triggering a mass extinction and a fresh start.
 
 ## Plant Biology & Simulation Mechanics
