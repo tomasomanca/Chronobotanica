@@ -660,7 +660,7 @@ export class Garden {
             const ageMs = now - birthTime;
             const ageHours = ageMs / (1000 * 60 * 60);
 
-            if (record.status === 'ash' || ageHours > 24) {
+            if (record.status === 'ash') {
                 this.spawnAshOnly(record, record.created_at);
                 continue;
             }
