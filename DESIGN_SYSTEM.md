@@ -20,13 +20,13 @@ Chronobotanica uses a high-contrast, minimalist aesthetic that blends retro-tele
 | `Sun` | `#FFFFFF` | Solar light source |
 
 ### Life Cycle Colors
-| Token | Color | Usage |
+| Token | HEX | Usage |
 | :--- | :--- | :--- |
-| `Genoma` | `#FFFFFF` | Legacy seeds (formerly Ash) |
-| `Crystal` | `#1A1A1A` | Mature/dead plant matter (Crystallized) |
-| `Stem` | DNA-mapped | Variable based on plant genetics |
-| `Leaf` | DNA-mapped | Variable based on plant genetics |
-| `Flower` | DNA-mapped | Variable based on plant genetics |
+| `Stem` | DNA-mapped | Voxel Type 1 |
+| `Leaf` | DNA-mapped | Voxel Type 2 |
+| `Flower` | DNA-mapped | Voxel Type 3 |
+| `Crystal` | `#1A1A1A` | Voxel Type 4 (Crystallized) |
+| `Genoma` | `#FFFFFF` | Voxel Type 5 (Legacy Seeds / Ash) |
 
 ## UI Components
 

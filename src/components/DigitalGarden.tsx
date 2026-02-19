@@ -53,41 +53,39 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
       const { data, error } = await supabase
         .from('plants')
         .select('*')
-        .order('created_at', { ascending: true }); // Get oldest first!
+        .order('created_at', { ascending: true });
 
       if (error) {
         console.error('Error loading plants:', error);
-        garden.seed(1);
-      } else if (data && data.length > 0) {
-        const records = data as unknown as PlantRecord[];
-        await garden.fastForward(records);
-
-        // CALCULATE MISSED BIRTHS
-        const lastPlant = records[records.length - 1];
-        const lastTime = new Date(lastPlant.created_at).getTime();
-        const now = Date.now();
-        const timeDiff = now - lastTime;
-
-        if (timeDiff > 0) {
-          garden.simulateMissedBirths(timeDiff);
-        }
-      } else {
-        garden.seed(1);
+        await garden.seed(1);
+        return;
       }
+
+      const records = data as unknown as PlantRecord[];
+
+      if (records.length === 0) {
+        await garden.seed(1);
+        return;
+      }
+
+      const { data: cellData, error: cellError } = await supabase
+        .from('plant_cells')
+        .select('*');
+
+      if (cellError) {
+        console.error('Error loading cells:', cellError);
+      }
+
+      const cells = cellData || [];
+      await garden.loadFromDatabase(records, cells);
     };
 
-    garden.onPlantBorn = (dna, x, z) => {
-      supabase.from('plants').insert({
-        dna,
-        x,
-        z
-      }).then(({ error }) => {
-        if (error) console.error("Failed to save seed:", error);
-      });
+    garden.onPlantBorn = async (id, dna, x, z) => {
+      const { error } = await supabase.from('plants').insert({ id, dna, x, z });
+      if (error) console.error('Failed to save plant:', error.message);
     };
 
     loadPlants();
-    // ---------------------
 
     const handleResize = () => {
       if (containerRef.current && visualizerRef.current) {
@@ -141,7 +139,7 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
       const RADS_PER_UPDATE = 2.0;
 
       while (gardenAccumulatorRef.current >= RADS_PER_UPDATE) {
-        gardenRef.current.update();
+        gardenRef.current.update(); // async fire-and-forget intentionally
         gardenAccumulatorRef.current -= RADS_PER_UPDATE;
       }
 

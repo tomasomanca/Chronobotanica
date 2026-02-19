@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { CellType, GridCell, GardenConfig, Genotype } from '../types';
+import { supabase } from '../supabaseClient';
+import { CellType, GridCell, GardenConfig, Genotype, PlantRecord } from '../types';
 import { GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, ENERGY_TO_GROW, MAX_AGE_STEM } from '../constants';
 
 // Deep Time Constants (Per Slow-Tick)
@@ -29,20 +30,32 @@ interface PlantState {
     individualMaxHeight: number;
     crystallizationDelay: number;
     vigor: number;
+    dna: string;
+    genotype: Genotype;
+    center: { x: number, y: number, z: number };
+    energy: number;
+    age: number;
 }
 
 export class Garden {
     public grid: Map<number, GridCell>;
     public config: GardenConfig;
     public sunPosition: { x: number, y: number, z: number };
-    public onPlantBorn?: (dna: string, x: number, z: number) => void;
+    public playbackTime: number; // TImestamp for visual replay
+    public onPlantBorn?: (id: number, dna: string, x: number, z: number) => Promise<void> | void;
 
     private plantCounter = 0;
+    private realPlantCount = 0;
     private activeTips: Map<number, TipState>;
     private plantRegistry: Map<number, PlantState>;
+    private uniqueSpeciesSet: Set<string>; // Track unique DNA strings
+
+    // Catch-up state: buffer DB writes during offline simulation
+    private isCatchingUp = false;
+    private pendingPlants: { id: number, dna: string, x: number, z: number }[] = [];
+    private pendingCells: { plant_id: number | null, x: number, y: number, z: number, type: number }[] = [];
 
     // Stats Tracking
-    private uniqueSpeciesSet: Set<string> = new Set();
     private cellCounts = {
         stem: 0,
         leaf: 0,
@@ -56,7 +69,9 @@ export class Garden {
         this.activeTips = new Map();
         this.grid = new Map();
         this.plantRegistry = new Map();
+        this.uniqueSpeciesSet = new Set();
         this.sunPosition = { x: 50, y: 110, z: 50 };
+        this.playbackTime = Date.now();
     }
 
     private simulationTime: number | null = null;
@@ -70,11 +85,26 @@ export class Garden {
         return x + (y * GRID_WIDTH) + (z * GRID_WIDTH * GRID_HEIGHT);
     }
 
-    // New helper to perform a single simulation tick without visualization or async delays
+    // Simulate sun position from a timestamp (same formula as DigitalGarden.tsx)
+    private updateSunFromTime(timeMs: number) {
+        const date = new Date(timeMs);
+        const secondsSinceMidnight = date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
+        const dayProgress = secondsSinceMidnight / 86400;
+        const phase = (dayProgress * Math.PI * 2) + (Math.PI / 2);
+        this.sunPosition = {
+            x: 50 + 130 * Math.cos(phase),
+            y: -130 * Math.sin(phase),
+            z: 50
+        };
+    }
+
+    // Perform simulation ticks without visualization or async delays
     private performTick(updates: number, stepMs: number = 0) {
         for (let i = 0; i < updates; i++) {
             if (this.simulationTime !== null) {
                 this.simulationTime += stepMs;
+                // Update sun position to match the simulated time
+                this.updateSunFromTime(this.simulationTime);
             }
 
             // 1. Spontaneous Seeding (Only if growthRate > 0)
@@ -125,27 +155,6 @@ export class Garden {
         }
     }
 
-    // ... (updateCellCount and createCell skipped) ...
-
-    public simulateMissedBirths(msPassed: number) {
-        // 1 Day = 86400000 ms
-        // 1 Cycle = 2 * PI radians
-        // Updates happen every 2.0 radians
-
-        const radsPerMs = (Math.PI * 2) / 86400000;
-        const totalRads = radsPerMs * msPassed;
-        const updatesMissed = totalRads / 2.0;
-
-        // Statistical Approximation
-        const expectedBirths = Math.floor(updatesMissed * SEED_CHANCE);
-
-        console.log(`[Garden] Missed ${msPassed}ms (~${Math.floor(updatesMissed)} updates). Simulating ${expectedBirths} births.`);
-
-        for (let i = 0; i < expectedBirths; i++) {
-            this.spawnNewPlant(true); // true = forced/retroactive
-        }
-    }
-
     private updateCellCount(type: CellType, delta: number) {
         switch (type) {
             case CellType.STEM: this.cellCounts.stem += delta; break;
@@ -186,9 +195,31 @@ export class Garden {
 
         if (plantId !== null && this.plantRegistry.has(plantId)) {
             this.plantRegistry.get(plantId)!.indices.push(index);
+
+            // Save to Database (skip during time travel, buffer during catch-up)
+            if (this.isCatchingUp) {
+                this.pendingCells.push({ plant_id: cell.plantId, x: cell.x, y: cell.y, z: cell.z, type: cell.type });
+            } else if (this.config.growthRate <= 1.0) {
+                this.saveNewCell(cell);
+            }
         }
     }
 
+    // --- PERSISTENCE HELPERS ---
+
+    private async saveNewCell(cell: GridCell) {
+        const { error } = await supabase.from('plant_cells').insert({
+            plant_id: cell.plantId,
+            x: cell.x,
+            y: cell.y,
+            z: cell.z,
+            type: cell.type
+        });
+
+        if (error) {
+            console.error('[Garden] Failed to save cell:', error.message);
+        }
+    }
 
     // --- GENETICS ---
 
@@ -246,41 +277,56 @@ export class Garden {
 
     // --- LIFECYCLE ---
 
-    public seed(count: number) {
-        for (let i = 0; i < count; i++) this.spawnNewPlant();
+    public async seed(count: number) {
+        for (let i = 0; i < count; i++) await this.spawnNewPlant();
     }
 
-    private registerPlant(id: number, genotype: Genotype, dnaHash: string) {
+    private registerPlant(id: number, genotype: Genotype, dna: string) {
         // VIGOR: 0.5 to 1.5
-        const vigorVal = parseInt(dnaHash.slice(-3), 16);
+        const vigorVal = parseInt(dna.slice(-3), 16);
         const vigorMultiplier = 0.5 + (vigorVal / 4095.0);
-
-        // Height Variation based on Vigor
-        const geneticHeight = genotype.maxHeight * GRID_HEIGHT;
-        const individualMaxHeight = Math.max(10, geneticHeight * vigorMultiplier);
-
-        // DOUBLED MATURITY: 30 to 90 cycles (approx)
-        // Plants stay colorful and alive for twice as long before starting to crystallize.
-        const delay = Math.floor(30 + (vigorMultiplier * 40));
 
         this.plantRegistry.set(id, {
             id,
             indices: [],
             phase: 'GROWING',
-            individualMaxHeight,
-            crystallizationDelay: delay,
-            vigor: vigorMultiplier
+            individualMaxHeight: Math.max(15, genotype.maxHeight * GRID_HEIGHT * (0.8 + Math.random() * 0.4)),
+            crystallizationDelay: 40 + Math.random() * 30,
+            vigor: 0.8 + Math.random() * 0.4,
+            dna,
+            genotype,
+            center: { x: 0, y: 0, z: 0 }, // Will be set by first stem
+            energy: 100,
+            age: 0
         });
     }
 
-    private initializePlantAt(index: number, x: number, y: number, z: number, dna: string, birthTime?: string) {
-        this.plantCounter++;
+    private async initializePlantAt(index: number, x: number, y: number, z: number, dna: string, birthTime: string | null = null, forcedId?: number) {
+        let id: number;
+
+        if (forcedId !== undefined) {
+            id = forcedId;
+            this.plantCounter = Math.max(this.plantCounter, id);
+        } else {
+            this.plantCounter++;
+            id = this.plantCounter;
+            this.realPlantCount++;
+        }
         this.uniqueSpeciesSet.add(dna); // Track unique species
         const genotype = this.parseDNA(dna);
 
-        this.registerPlant(this.plantCounter, genotype, dna);
+        this.registerPlant(id, genotype, dna);
 
-        this.createCell(index, x, y, z, CellType.STEM, this.plantCounter, dna, genotype, birthTime);
+        // Save plant record FIRST (skip during time travel, buffer during catch-up)
+        if (forcedId === undefined) {
+            if (this.isCatchingUp) {
+                this.pendingPlants.push({ id, dna, x, z });
+            } else if (this.onPlantBorn && this.config.growthRate <= 1.0) {
+                await this.onPlantBorn(id, dna, x, z);
+            }
+        }
+
+        this.createCell(index, x, y, z, CellType.STEM, id, dna, genotype, birthTime);
 
         const cell = this.grid.get(index)!;
         cell.isTip = true;
@@ -295,7 +341,7 @@ export class Garden {
         });
     }
 
-    private spawnNewPlant(isRetroactive = false) {
+    private async spawnNewPlant() {
         let attempts = 0;
         while (attempts < 10) {
             const rx = Math.floor(Math.random() * GRID_WIDTH);
@@ -304,18 +350,17 @@ export class Garden {
 
             if (idx !== -1 && !this.grid.has(idx)) {
                 const dna = this.generateDNA();
-                this.initializePlantAt(idx, rx, 0, rz, dna);
-
-                if (this.onPlantBorn) {
-                    this.onPlantBorn(dna, rx, rz);
-                }
+                await this.initializePlantAt(idx, rx, 0, rz, dna);
                 break;
             }
             attempts++;
         }
     }
 
-    public update() {
+    public async update() {
+        const MS_PER_UPDATE = (2.0 / (Math.PI * 2)) * 86400000;
+        this.playbackTime += MS_PER_UPDATE;
+
         // 1. Spontaneous Seeding
         if (this.config.growthRate > 0 && Math.random() < SEED_CHANCE) {
             this.spawnNewPlant();
@@ -500,6 +545,7 @@ export class Garden {
 
                     state.indices = seedIdx !== -1 ? [seedIdx] : [];
                     state.phase = 'LEGACY';
+
                 }
             }
         }
@@ -709,79 +755,232 @@ export class Garden {
     }
     // --- PERSISTENCE & FAST FORWARD ---
 
-    public async fastForward(records: { id: number, created_at: string, dna: string, x: number, z: number, status: string }[]) {
-        console.log(`[Garden] Fast-forwarding ${records.length} plants using Replay Simulation...`);
-        const now = Date.now();
+    public async loadFromDatabase(records: PlantRecord[], cells: any[]) {
+        if (records.length === 0) return;
 
-        // Sort by age (Oldest first)
-        records.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        console.log(`[Garden] Loading ${records.length} plants and ${cells.length} cells...`);
 
-        // Temporarily disable spontaneous seeding during replay to focus on recorded plants
         const originalGrowthRate = this.config.growthRate;
-        this.config.growthRate = 0;
+        this.config.growthRate = 0; // Pause simulation during load
 
-        let currentTime = new Date(records[0].created_at).getTime();
-        this.simulationTime = currentTime;
+        // 1. Initialize Plants (Registry)
+        let maxId = 0;
+        let minTime = Date.now();
+        let lastSavedTime: number | null = null;
 
-        // 1. Initialize First Plant
-        const first = records[0];
-        if (first.status === 'ash') {
-            this.spawnAshOnly(first, first.created_at);
-        } else {
-            const idx = this.getIndex(first.x, 0, first.z);
-            if (idx !== -1 && !this.grid.has(idx)) {
-                this.initializePlantAt(idx, first.x, 0, first.z, first.dna, first.created_at);
-            }
-        }
-
-        // 2. Replay History
-        for (let i = 1; i < records.length; i++) {
-            const nextRecord = records[i];
-            const nextTime = new Date(nextRecord.created_at).getTime();
-            const deltaMs = nextTime - currentTime;
-
-            if (deltaMs > 0) {
-                this.catchUpTime(deltaMs);
-            }
-
-            this.simulationTime = nextTime; // Sync exact time for next spawn
-
-            // Spawn next plant
-            if (nextRecord.status === 'ash') {
-                this.spawnAshOnly(nextRecord, nextRecord.created_at);
-            } else {
-                const idx = this.getIndex(nextRecord.x, 0, nextRecord.z);
-                if (idx !== -1 && !this.grid.has(idx)) {
-                    // console.log(`[Replay] Spawning plant ${nextRecord.id} at time ${nextRecord.created_at}`);
-                    this.initializePlantAt(idx, nextRecord.x, 0, nextRecord.z, nextRecord.dna, nextRecord.created_at);
+        for (const record of records) {
+            // Use forcedId to keep sync with DB
+            const idx = this.getIndex(record.x, 0, record.z);
+            if (idx !== -1) {
+                const isAsh = record.status === 'ash';
+                if (!isAsh) {
+                    const genotype = this.parseDNA(record.dna);
+                    this.registerPlant(record.id, genotype, record.dna);
+                    this.uniqueSpeciesSet.add(record.dna);
+                    maxId = Math.max(maxId, record.id);
+                } else {
+                    // If it's ash, we still need to place it on the grid
+                    this.spawnAshOnly(record, record.created_at);
                 }
             }
-            currentTime = nextTime;
+            // Track the latest creation time among loaded plants
+            const recordTime = new Date(record.created_at).getTime();
+            if (lastSavedTime === null || recordTime > lastSavedTime) {
+                lastSavedTime = recordTime;
+            }
+            if (recordTime < minTime) minTime = recordTime;
+        }
+        this.plantCounter = maxId;
+        this.realPlantCount = records.length;
+
+        this.playbackTime = Date.now() + 5000;
+
+        // 2. Hydrate Grid from Cells
+        for (const cellData of cells) {
+            const idx = this.getIndex(cellData.x, cellData.y, cellData.z);
+            if (idx !== -1) {
+                // FIXED: Map legacy type 0 (Empty) to 1 (Stem) if present
+                let type = cellData.type;
+                if (type === 0) type = 1; // 1 = CellType.STEM
+
+                const plantState = this.plantRegistry.get(cellData.plant_id);
+                if (plantState) {
+                    // Create cell directly without trigger logic
+                    // Use 'created_at' from DB as birthTime
+                    this.createCellDirect(idx, cellData.x, cellData.y, cellData.z, type, cellData.plant_id, plantState.dna, plantState.genotype, cellData.created_at);
+                } else {
+                    // Handle ash cells or cells for plants not in registry (e.g., legacy ash)
+                    const dna = records.find(r => r.id === cellData.plant_id)?.dna || '0x000000000000'; // Fallback DNA
+                    const genotype = this.parseDNA(dna);
+                    this.createCellDirect(idx, cellData.x, cellData.y, cellData.z, type, cellData.plant_id, dna, genotype, cellData.created_at);
+                }
+            }
         }
 
-        // 3. Catch up to NOW
-        const remainingMs = now - currentTime;
-        if (remainingMs > 0) {
-            this.catchUpTime(remainingMs);
+        // 3. Reconstruct active tips for growing plants
+        for (const [plantId, state] of this.plantRegistry) {
+            if (state.phase === 'GROWING') {
+                this.reconstructTipsForGrowth(plantId);
+            }
         }
 
-        // Restore configuration
+        // 4. Catch Up Time (with sun simulation and batch DB save)
+        const now = Date.now();
+        if (lastSavedTime !== null && now > lastSavedTime) {
+            const msPassed = now - lastSavedTime;
+            console.log(`[Garden] Simulating ${msPassed}ms of missed time...`);
+
+            // Save and restore sun position after catch-up
+            const savedSun = { ...this.sunPosition };
+            this.simulationTime = lastSavedTime;
+            this.isCatchingUp = true;
+            this.config.growthRate = 1.0; // Enable seeding during catch-up
+
+            this.catchUpTime(msPassed);
+
+            this.isCatchingUp = false;
+            this.simulationTime = null;
+            this.sunPosition = savedSun;
+
+            // Flush buffered plants and cells to DB
+            await this.flushPendingToDatabase();
+        }
+
         this.config.growthRate = originalGrowthRate;
-        this.simulationTime = null; // Return to real-time
-        console.log(`[Garden] Replay complete.`);
+        console.log(`[Garden] Database load complete.`);
+    }
+
+    private createCellDirect(index: number, x: number, y: number, z: number, type: CellType, plantId: number | null, dna: string, genotype: Genotype, birthTime?: string) {
+        // If overwriting, decrement old type
+        if (this.grid.has(index)) {
+            this.updateCellCount(this.grid.get(index)!.type, -1);
+        }
+
+        const cell: GridCell = {
+            type,
+            x, y, z,
+            plantId,
+            dnaHash: dna,
+            genotype,
+            age: 0, // Age will be calculated during simulation
+            maxAge: MAX_AGE_STEM,
+            energy: 0, // Energy will be calculated during simulation
+            isTip: false,
+            birthTime: birthTime || new Date(this.timeNow).toISOString() // Use provided birthTime or current sim time
+        };
+
+        this.grid.set(index, cell);
+        this.updateCellCount(type, 1);
+
+        // Update Registry
+        if (plantId !== null && this.plantRegistry.has(plantId)) {
+            this.plantRegistry.get(plantId)!.indices.push(index);
+        }
+    }
+
+    private reconstructTipsForGrowth(plantId: number) {
+        const plantState = this.plantRegistry.get(plantId);
+        if (!plantState || plantState.phase !== 'GROWING') return;
+
+        // Clear any existing tips for this plant (e.g., from initial root creation)
+        for (const [key, tip] of this.activeTips) {
+            const cell = this.grid.get(tip.idx);
+            if (cell && cell.plantId === plantId) {
+                this.activeTips.delete(key);
+            }
+        }
+
+        // Find potential tips: STEM cells that have no STEM/FLOWER/LEAF neighbor directly above them
+        const plantCells = plantState.indices
+            .map(idx => this.grid.get(idx))
+            .filter((cell): cell is GridCell => cell !== undefined && cell.type === CellType.STEM);
+
+        const potentialTips: GridCell[] = [];
+        for (const cell of plantCells) {
+            const neighborAboveIdx = this.getIndex(cell.x, cell.y + 1, cell.z);
+            const neighborAbove = this.grid.get(neighborAboveIdx);
+
+            if (!neighborAbove || (neighborAbove.plantId !== plantId || (neighborAbove.type !== CellType.STEM && neighborAbove.type !== CellType.FLOWER && neighborAbove.type !== CellType.LEAF))) {
+                potentialTips.push(cell);
+            }
+        }
+
+        // For simplicity, let's just reactivate the highest stem cells as tips
+        // Or, if there are no stems, the root (if it's a stem)
+        if (potentialTips.length > 0) {
+            // Sort by Y-coordinate to prioritize higher tips
+            potentialTips.sort((a, b) => b.y - a.y);
+
+            // Reactivate a few highest tips, or all if the plant is small
+            const numTipsToReactivate = Math.min(potentialTips.length, 5); // Reactivate up to 5 tips
+
+            for (let i = 0; i < numTipsToReactivate; i++) {
+                const tipCell = potentialTips[i];
+                const tipIdx = this.getIndex(tipCell.x, tipCell.y, tipCell.z);
+
+                // Ensure it's not already an active tip
+                if (!this.activeTips.has(tipIdx)) {
+                    tipCell.isTip = true;
+                    tipCell.energy = ENERGY_TO_GROW * 2; // Give it some energy to start growing
+
+                    // Estimate direction based on its position relative to the root or just default upwards
+                    const rootCell = this.grid.get(plantState.indices[0]);
+                    let dir = { x: 0, y: 1, z: 0 };
+                    if (rootCell && tipCell.y > rootCell.y) {
+                        dir = {
+                            x: (tipCell.x - rootCell.x) / (tipCell.y - rootCell.y + 1),
+                            y: 1,
+                            z: (tipCell.z - rootCell.z) / (tipCell.y - rootCell.y + 1)
+                        };
+                        const len = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+                        if (len > 0) { dir.x /= len; dir.y /= len; dir.z /= len; }
+                    }
+
+                    this.activeTips.set(tipIdx, {
+                        idx: tipIdx,
+                        dir: dir,
+                        level: 0, // This might need more sophisticated logic for actual branch levels
+                        length: 0, // This will be recalculated as it grows
+                        maxLength: 40 + Math.random() * 50 // New max length
+                    });
+                }
+            }
+        } else if (plantState.indices.length > 0) {
+            // If no stems found (e.g., only ash or flower), ensure it's not growing
+            plantState.phase = 'MATURE'; // Or 'CRYSTALLIZING' if it's old
+        }
     }
 
     private catchUpTime(ms: number) {
-        // Calculate how many updates fit in this time window
-        // 1 tick = 2.0 radians of sun movement
-        // Sun moves 2PI in 24h (86400000ms)
         const radsPerMs = (Math.PI * 2) / 86400000;
         const msPerUpdate = 2.0 / radsPerMs;
-
         const updates = Math.floor(ms / msPerUpdate);
 
         if (updates > 0) {
             this.performTick(updates, msPerUpdate);
+        }
+    }
+
+    // Batch-save all plants and cells buffered during catch-up
+    private async flushPendingToDatabase() {
+        // Save plants first (FK dependency)
+        if (this.pendingPlants.length > 0 && this.onPlantBorn) {
+            for (const p of this.pendingPlants) {
+                await this.onPlantBorn(p.id, p.dna, p.x, p.z);
+            }
+            console.log(`[Garden] Flushed ${this.pendingPlants.length} plants to DB.`);
+            this.pendingPlants = [];
+        }
+
+        // Batch-insert cells
+        if (this.pendingCells.length > 0) {
+            const { error } = await supabase.from('plant_cells').insert(this.pendingCells);
+            if (error) {
+                console.error('[Garden] Batch cell insert failed:', error.message);
+            } else {
+                console.log(`[Garden] Flushed ${this.pendingCells.length} cells to DB.`);
+            }
+            this.pendingCells = [];
         }
     }
 
@@ -793,21 +992,15 @@ export class Garden {
         }
     }
 
+
     public getStats() {
         return {
-            totalPlantsBorn: this.plantCounter,
+            totalPlantsBorn: this.realPlantCount,
             activePlants: this.plantRegistry.size,
             uniqueSpecies: this.uniqueSpeciesSet.size,
             sunPosition: 0,
             virtualDays: 0,
             cells: { ...this.cellCounts }
         };
-    }
-
-    public async prunePlants(maxAgeHours: number = 48) {
-        console.log(`[Garden] Pruning requested...`);
-        // In a real implementation, we would DELETE from Supabase here.
-        // For now, we will just log it.
-        // potentially: await supabase.from('plants').delete().lt('created_at', cutoffDate);
     }
 }

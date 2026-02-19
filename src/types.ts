@@ -1,12 +1,13 @@
 export enum CellType {
   EMPTY = 0,
   STEM = 1,
-  FLOWER = 2,
-  PETAL = 3,
+  LEAF = 2,
+  FLOWER = 3,
   CRYSTAL = 4,
   ASH = 5,
-  SUN = 6,
-  LEAF = 7
+  // System Types
+  PETAL = 6,
+  SUN = 7
 }
 
 export interface Genotype {

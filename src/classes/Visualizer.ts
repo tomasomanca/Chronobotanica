@@ -160,6 +160,13 @@ export class Visualizer {
         continue;
       }
 
+      // TIME TRAVEL VISUAL FILTER
+      // If the cell was born in the future relative to playbackTime, don't show it.
+      if (cell.birthTime) {
+        const birth = new Date(cell.birthTime).getTime();
+        if (birth > garden.playbackTime) continue;
+      }
+
       this.dummy.position.set(cell.x, cell.y, cell.z);
       this.dummy.scale.set(1, 1, 1);
       this.dummy.updateMatrix();

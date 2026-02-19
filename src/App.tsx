@@ -14,9 +14,6 @@ const App: React.FC = () => {
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const chunksRef = React.useRef<Blob[]>([]);
 
-  // Debug state for Raycast
-  const [debugHits, setDebugHits] = useState(0);
-  const [debugInstanceId, setDebugInstanceId] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -63,11 +60,6 @@ const App: React.FC = () => {
           onHover={handleHover}
           onSunUpdate={setSunProgress}
           onDebugStats={setStats}
-        // onDebugRay={(hits, instanceId, totalInstances) => {
-        //   setDebugHits(hits);
-        //   setDebugInstanceId(instanceId);
-        //   setStats(prev => prev ? ({ ...prev, activePlants: totalInstances || 0 }) : null); // HACK: Update ActivePlants stat for verifying
-        // }}
         />
       </div>
 
@@ -353,7 +345,14 @@ const App: React.FC = () => {
             CLASS <span className={`ml-4 ${getCellColorClass(hoverInfo)}`}>{getCellClass(hoverInfo)}</span>
           </div>
           <div className="text-[10px] tracking-widest text-white uppercase">
-            BORN <span className="text-white ml-5">{hoverInfo.birthTime}</span>
+            BORN <span className="text-white ml-5">
+              {hoverInfo.birthTime ? (() => {
+                const b = new Date(hoverInfo.birthTime);
+                const d = `${b.getDate().toString().padStart(2, '0')}.${(b.getMonth() + 1).toString().padStart(2, '0')}.${b.getFullYear().toString().slice(-2)}`;
+                const t = `${b.getHours().toString().padStart(2, '0')}:${b.getMinutes().toString().padStart(2, '0')}:${b.getSeconds().toString().padStart(2, '0')}`;
+                return `${d} · ${t}`;
+              })() : '---'}
+            </span>
           </div>
         </div>
       )}

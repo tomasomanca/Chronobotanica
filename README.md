@@ -6,13 +6,15 @@ Chronobotanica is a digital garden simulation exploring the intersection of biol
 
 ### Global Persistence (Supabase)
 - **Real-Time Database**: Every plant born in the garden is instantly recorded in a Supabase database.
-- **State Restoration**: When the garden is reloaded, it fetches the entire history of the garden and "fast-forwards" growth to the current moment.
-- **Missed Events**: The simulation calculates and spawns plants that *would have been born* while the application was closed, ensuring a continuous living world.
+- **Atomic Block Persistence**: Every individual cell (Stem, Leaf, Flower, etc.) is saved as a discrete record in the `plant_cells` table. This ensures extreme precision and eliminates the "missing growth" issues of large JSON blobs.
+- **Time Travel Guard**: Blocks are persisted *only* during real-time growth (`growthRate <= 1.0`). Time Travel simulations are transient and do not write to the database.
+- **Full Reconstruction**: On reload, the garden fetches all historical cells and reconstructs the plants exactly as they were left.
+- **Faithful Catch-Up**: When reopened after days offline, the garden simulates every missed tick with accurate sun cycling (heliotropism) and batch-saves all generated plants and cells to Supabase in a single transaction.
 
 ### Temporal Control
-- **Time Travel**: A specialized mode where time accelerates to **1 Day per Second**, allowing users to witness generations of evolution in moments.
-- **Back to Present**: Instantly snaps the simulation back to the user's local real-time and re-syncs with the database.
-- **Retroactive Growth**: Plants continue to grow even when the application is closed. Upon return, the garden simulates the passage of time, instantly aging plants to their correct state.
+- **Time Travel**: A specialized mode where time accelerates to **1 Day per Second**, allowing users to witness generations of evolution in moments. No data is written to the database during this mode.
+- **Back to Present**: Instantly reloads the garden from the database, discarding any Time Travel state.
+- **Retroactive Growth**: Plants continue to grow even when the application is closed. Upon return, the garden simulates the passage of time with correct sun positions, then batch-saves all new growth.
 - **End of the World**: A destructive event that wipes the database, triggering a mass extinction and a fresh start.
 
 ## Plant Biology & Simulation Mechanics
@@ -76,7 +78,7 @@ Plants follow a finite lifecycle:
     ```
 
 2.  **Environment Variables**:
-    Create a `.env` file in the root directory with your Supabase credentials:
+    Create a `.env.local` file in the root directory with your Supabase credentials:
     ```env
     VITE_SUPABASE_URL=your_project_url
     VITE_SUPABASE_ANON_KEY=your_anon_key
