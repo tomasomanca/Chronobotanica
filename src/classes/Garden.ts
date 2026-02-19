@@ -64,6 +64,57 @@ export class Garden {
         return x + (y * GRID_WIDTH) + (z * GRID_WIDTH * GRID_HEIGHT);
     }
 
+    // New helper to perform a single simulation tick without visualization or async delays
+    private performTick(updates: number) {
+        for (let i = 0; i < updates; i++) {
+            // 1. Spontaneous Seeding (Only if growthRate > 0)
+            if (this.config.growthRate > 0 && Math.random() < SEED_CHANCE) {
+                this.spawnNewPlant();
+            }
+
+            // 2. Rebirth
+            for (const [plantId, state] of this.plantRegistry) {
+                if (state.phase === 'LEGACY') {
+                    if (state.indices.length > 0 && Math.random() < REBIRTH_CHANCE) {
+                        const rootIdx = state.indices[0];
+                        const cell = this.grid.get(rootIdx);
+                        if (cell && cell.type === CellType.ASH) {
+                            const dna = cell.dnaHash;
+                            const x = cell.x;
+                            const y = cell.y;
+                            const z = cell.z;
+                            state.indices = [];
+                            this.initializePlantAt(rootIdx, x, y, z, dna);
+                        }
+                    }
+                }
+            }
+
+            // 3. Update Growth
+            const tips = Array.from(this.activeTips.values());
+            // Randomize order slightly for organic feel
+            if (tips.length > 0) {
+                // Optimization: shuffle only if needed or just iterate
+                // For catch-up speed, we can skip shuffle or do a simple one
+                for (let j = tips.length - 1; j > 0; j--) {
+                    const k = Math.floor(Math.random() * (j + 1));
+                    [tips[j], tips[k]] = [tips[k], tips[j]];
+                }
+            }
+
+            const processCount = Math.min(tips.length, 60);
+            for (let t = 0; t < processCount; t++) {
+                const tip = tips[t];
+                if (tip && this.activeTips.has(tip.idx)) {
+                    this.processTip(tip.idx);
+                }
+            }
+
+            // 4. Update Lifecycle
+            this.updateLifecycle();
+        }
+    }
+
     // ... (updateCellCount and createCell skipped) ...
 
     public simulateMissedBirths(msPassed: number) {
@@ -649,26 +700,73 @@ export class Garden {
     // --- PERSISTENCE & FAST FORWARD ---
 
     public async fastForward(records: { id: number, created_at: string, dna: string, x: number, z: number, status: string }[]) {
-        console.log(`[Garden] Fast-forwarding ${records.length} plants...`);
+        console.log(`[Garden] Fast-forwarding ${records.length} plants using Replay Simulation...`);
         const now = Date.now();
 
-        // Sort by age
+        // Sort by age (Oldest first)
         records.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
-        for (const record of records) {
-            const birthTime = new Date(record.created_at).getTime();
-            const ageMs = now - birthTime;
-            const ageHours = ageMs / (1000 * 60 * 60);
+        // Temporarily disable spontaneous seeding during replay to focus on recorded plants
+        const originalGrowthRate = this.config.growthRate;
+        this.config.growthRate = 0;
 
-            if (record.status === 'ash') {
-                this.spawnAshOnly(record, record.created_at);
-                continue;
+        let currentTime = new Date(records[0].created_at).getTime();
+
+        // 1. Initialize First Plant
+        const first = records[0];
+        if (first.status === 'ash') {
+            this.spawnAshOnly(first, first.created_at);
+        } else {
+            const idx = this.getIndex(first.x, 0, first.z);
+            if (idx !== -1 && !this.grid.has(idx)) {
+                this.initializePlantAt(idx, first.x, 0, first.z, first.dna, first.created_at);
+            }
+        }
+
+        // 2. Replay History
+        for (let i = 1; i < records.length; i++) {
+            const nextRecord = records[i];
+            const nextTime = new Date(nextRecord.created_at).getTime();
+            const deltaMs = nextTime - currentTime;
+
+            if (deltaMs > 0) {
+                this.catchUpTime(deltaMs);
             }
 
-            const idx = this.getIndex(record.x, 0, record.z);
-            if (idx === -1 || this.grid.has(idx)) continue;
+            // Spawn next plant
+            if (nextRecord.status === 'ash') {
+                this.spawnAshOnly(nextRecord, nextRecord.created_at);
+            } else {
+                const idx = this.getIndex(nextRecord.x, 0, nextRecord.z);
+                if (idx !== -1 && !this.grid.has(idx)) {
+                    // console.log(`[Replay] Spawning plant ${nextRecord.id} at time ${nextRecord.created_at}`);
+                    this.initializePlantAt(idx, nextRecord.x, 0, nextRecord.z, nextRecord.dna, nextRecord.created_at);
+                }
+            }
+            currentTime = nextTime;
+        }
 
-            this.initializePlantAt(idx, record.x, 0, record.z, record.dna, record.created_at);
+        // 3. Catch up to NOW
+        const remainingMs = now - currentTime;
+        if (remainingMs > 0) {
+            this.catchUpTime(remainingMs);
+        }
+
+        // Restore configuration
+        this.config.growthRate = originalGrowthRate;
+        console.log(`[Garden] Replay complete.`);
+    }
+
+    private catchUpTime(ms: number) {
+        // Calculate how many updates fit in this time window
+        // 1 tick = 2.0 radians of sun movement
+        // Sun moves 2PI in 24h (86400000ms)
+        const radsPerMs = (Math.PI * 2) / 86400000;
+        const totalRads = radsPerMs * ms;
+        const updates = Math.floor(totalRads / 2.0);
+
+        if (updates > 0) {
+            this.performTick(updates);
         }
     }
 
