@@ -348,6 +348,7 @@ const App: React.FC = () => {
             BORN <span className="text-white ml-5">
               {hoverInfo.birthTime ? (() => {
                 const b = new Date(hoverInfo.birthTime);
+                if (isNaN(b.getTime())) return '---';
                 const d = `${b.getDate().toString().padStart(2, '0')}.${(b.getMonth() + 1).toString().padStart(2, '0')}.${b.getFullYear().toString().slice(-2)}`;
                 const t = `${b.getHours().toString().padStart(2, '0')}:${b.getMinutes().toString().padStart(2, '0')}:${b.getSeconds().toString().padStart(2, '0')}`;
                 return `${d} · ${t}`;
