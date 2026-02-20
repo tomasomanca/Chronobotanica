@@ -6,6 +6,7 @@ Chronobotanica is a digital garden simulation exploring the intersection of biol
 
 ### Global Persistence (Supabase)
 - **Real-Time Database**: Every plant born in the garden is instantly recorded in a Supabase database.
+- **Global Time Tracking**: A dedicated `garden_state` table tracks the exact virtual time of the last completed simulation tick, ensuring no fractional time is lost between sessions.
 - **Atomic Block Persistence**: Every individual cell (Stem, Leaf, Flower, etc.) is saved as a discrete record in the `plant_cells` table. This ensures extreme precision and eliminates the "missing growth" issues of large JSON blobs.
 - **Time Travel Guard**: Blocks are persisted *only* during real-time growth (`growthRate <= 1.0`). Time Travel simulations are transient and do not write to the database.
 - **Full Reconstruction**: On reload, the garden fetches all historical cells and reconstructs the plants exactly as they were left.
@@ -84,7 +85,13 @@ Plants follow a finite lifecycle:
     VITE_SUPABASE_ANON_KEY=your_anon_key
     ```
 
-3.  **Run Development Server**:
+3.  **Supabase Schema & Policies**:
+    Ensure the following tables and Row Level Security (RLS) policies are active for the `anon` role:
+    - **`plants`**: `ENABLE ROW LEVEL SECURITY; CREATE POLICY "Allow all for anon" ON plants FOR ALL USING (true) WITH CHECK (true);`
+    - **`plant_cells`**: `ENABLE ROW LEVEL SECURITY; CREATE POLICY "Permetti lettura pubblica delle celle delle piante" ON plant_cells FOR SELECT TO anon USING (true);` (Note: Cells are inserted in batches, ensure insert/update policies match your needs).
+    - **`garden_state`**: `ENABLE ROW LEVEL SECURITY; CREATE POLICY "Allow all for anon" ON garden_state FOR ALL USING (true) WITH CHECK (true);`
+
+4.  **Run Development Server**:
     ```bash
     npm run dev
     ```

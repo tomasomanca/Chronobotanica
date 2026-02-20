@@ -52,6 +52,7 @@ export class Garden {
 
     // Catch-up state: buffer DB writes during offline simulation
     private isCatchingUp = false;
+    private globalLastTickTime: number | null = null;
     private pendingPlants: { id: number, dna: string, x: number, z: number }[] = [];
     private pendingCells: { plant_id: number | null, x: number, y: number, z: number, type: number }[] = [];
 
@@ -398,6 +399,15 @@ export class Garden {
 
         // 4. Update Lifecycle
         this.updateLifecycle();
+
+        // 5. Update Global Time in DB if running live
+        if (this.config.growthRate <= 1.0 && this.globalLastTickTime !== null && !this.isCatchingUp) {
+            this.globalLastTickTime += MS_PER_UPDATE;
+            const newGlobalTime = new Date(this.globalLastTickTime).toISOString();
+            supabase.from('garden_state').upsert({ id: 1, last_tick_time: newGlobalTime }).then(({ error }) => {
+                if (error) console.error('[Garden] Failed to update live global time:', error.message);
+            });
+        }
     }
 
     private triggerMaturity(plantId: number) {
@@ -755,7 +765,7 @@ export class Garden {
     }
     // --- PERSISTENCE & FAST FORWARD ---
 
-    public async loadFromDatabase(records: PlantRecord[], cells: any[]) {
+    public async loadFromDatabase(records: PlantRecord[], cells: any[], globalLastTickTime?: number | null) {
         if (records.length === 0) return;
 
         console.log(`[Garden] Loading ${records.length} plants and ${cells.length} cells...`);
@@ -766,7 +776,7 @@ export class Garden {
         // 1. Initialize Plants (Registry)
         let maxId = 0;
         let minTime = Date.now();
-        let lastSavedTime: number | null = null;
+        let inferredLastSavedTime: number | null = null;
 
         for (const record of records) {
             // Use forcedId to keep sync with DB
@@ -785,11 +795,18 @@ export class Garden {
             }
             // Track the latest creation time among loaded plants
             const recordTime = new Date(record.created_at).getTime();
-            if (lastSavedTime === null || recordTime > lastSavedTime) {
-                lastSavedTime = recordTime;
+            if (inferredLastSavedTime === null || recordTime > inferredLastSavedTime) {
+                inferredLastSavedTime = recordTime;
             }
             if (recordTime < minTime) minTime = recordTime;
         }
+
+        const lastSavedTime = globalLastTickTime !== undefined && globalLastTickTime !== null
+            ? globalLastTickTime
+            : inferredLastSavedTime;
+
+        this.globalLastTickTime = lastSavedTime;
+
         this.plantCounter = maxId;
         this.realPlantCount = records.length;
 
@@ -836,7 +853,7 @@ export class Garden {
             this.isCatchingUp = true;
             this.config.growthRate = 1.0; // Enable seeding during catch-up
 
-            this.catchUpTime(msPassed);
+            const exactMsAdvanced = this.catchUpTime(msPassed);
 
             this.isCatchingUp = false;
             this.simulationTime = null;
@@ -844,6 +861,14 @@ export class Garden {
 
             // Flush buffered plants and cells to DB
             await this.flushPendingToDatabase();
+
+            // Save exactly advanced global time back to DB (preserving fractional unused time)
+            if (exactMsAdvanced > 0) {
+                this.globalLastTickTime = lastSavedTime + exactMsAdvanced;
+                const newGlobalTime = new Date(this.globalLastTickTime).toISOString();
+                const { error } = await supabase.from('garden_state').upsert({ id: 1, last_tick_time: newGlobalTime });
+                if (error) console.error('[Garden] Failed to update global time:', error.message);
+            }
         }
 
         this.config.growthRate = originalGrowthRate;
@@ -951,14 +976,16 @@ export class Garden {
         }
     }
 
-    private catchUpTime(ms: number) {
+    private catchUpTime(ms: number): number {
         const radsPerMs = (Math.PI * 2) / 86400000;
         const msPerUpdate = 2.0 / radsPerMs;
         const updates = Math.floor(ms / msPerUpdate);
 
         if (updates > 0) {
             this.performTick(updates, msPerUpdate);
+            return updates * msPerUpdate;
         }
+        return 0;
     }
 
     // Batch-save all plants and cells buffered during catch-up

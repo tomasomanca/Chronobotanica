@@ -50,6 +50,18 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
 
     // --- SUPABASE LOAD ---
     const loadPlants = async () => {
+      // 1. Fetch exact global time
+      let lastTickTime: number | null = null;
+      const { data: stateData, error: stateError } = await supabase
+        .from('garden_state')
+        .select('*')
+        .eq('id', 1)
+        .single();
+
+      if (!stateError && stateData) {
+        lastTickTime = new Date(stateData.last_tick_time).getTime();
+      }
+
       const { data, error } = await supabase
         .from('plants')
         .select('*')
@@ -77,7 +89,7 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
       }
 
       const cells = cellData || [];
-      await garden.loadFromDatabase(records, cells);
+      await garden.loadFromDatabase(records, cells, lastTickTime);
     };
 
     garden.onPlantBorn = async (id, dna, x, z) => {
