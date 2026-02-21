@@ -1,5 +1,9 @@
 # Chronobotanica
 
+> *"The base of the flower, at the point where it joins the stem, is a moment from the algorithm's past, while the curled edges of the petals show what the algorithm was busy with, yesterday's forms. Observing life is never looking at the here or at a single time and place: they are palimpsests of displacement and rewritings and reiterations."*
+>
+> — T. Morton, *Ecology as Text, Text as Ecology*
+
 Chronobotanica is a digital garden simulation exploring the intersection of biological rhythms and virtual time. It features a voxel-based sculptural world where plants grow, mature, and eventually dissolve into seeds that carry their genetic legacy forward.
 
 ## Key Features
