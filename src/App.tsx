@@ -123,9 +123,12 @@ const App: React.FC = () => {
         <button
           disabled={true}
           onClick={async () => {
-            const { error } = await import('./supabaseClient').then(m => m.supabase.from('plants').delete().neq('id', 0));
-            if (error) console.error("Wipe failed", error);
-            else window.location.reload();
+            const { supabase } = await import('./supabaseClient');
+            const { error } = await supabase.from('plants').delete().neq('id', 0);
+            if (error) { console.error("Wipe failed", error); return; }
+            // Reset garden epoch so virtualDays restarts from 0
+            await supabase.from('garden_state').upsert({ id: 1, garden_born_at: null, last_tick_time: new Date().toISOString(), catchup_locked_at: null });
+            window.location.reload();
           }}
           className="w-48 text-center border border-fuchsia-400/30 px-6 py-2 text-[10px] uppercase tracking-widest rounded-none bg-fuchsia-900/20 text-fuchsia-200/30 cursor-not-allowed mt-4"
         >
@@ -234,9 +237,12 @@ const App: React.FC = () => {
             <button
               disabled={true}
               onClick={async () => {
-                const { error } = await import('./supabaseClient').then(m => m.supabase.from('plants').delete().neq('id', 0));
-                if (error) console.error("Wipe failed", error);
-                else window.location.reload();
+                const { supabase } = await import('./supabaseClient');
+                const { error } = await supabase.from('plants').delete().neq('id', 0);
+                if (error) { console.error("Wipe failed", error); return; }
+                // Reset garden epoch so virtualDays restarts from 0
+                await supabase.from('garden_state').upsert({ id: 1, garden_born_at: null, last_tick_time: new Date().toISOString(), catchup_locked_at: null });
+                window.location.reload();
               }}
               className="w-48 text-center border border-fuchsia-400/30 px-6 py-2 text-[10px] uppercase tracking-widest rounded-none bg-fuchsia-900/20 text-fuchsia-200/30 cursor-not-allowed mt-4"
             >

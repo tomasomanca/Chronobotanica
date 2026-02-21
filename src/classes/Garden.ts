@@ -56,6 +56,9 @@ export class Garden {
     private pendingPlants: { id: number, dna: string, x: number, z: number }[] = [];
     private pendingCells: { plant_id: number | null, x: number, y: number, z: number, type: number }[] = [];
 
+    // Garden epoch: timestamp of when the garden was first born (persists across reloads)
+    public gardenBornAt: number | null = null;
+
     // Stats Tracking
     private cellCounts = {
         stem: 0,
@@ -763,7 +766,7 @@ export class Garden {
     }
     // --- PERSISTENCE & FAST FORWARD ---
 
-    public async loadFromDatabase(records: PlantRecord[], cells: any[], globalLastTickTime?: number | null) {
+    public async loadFromDatabase(records: PlantRecord[], cells: any[], globalLastTickTime?: number | null, gardenBornAt?: number | null) {
         if (records.length === 0) return;
 
         console.log(`[Garden] Loading ${records.length} plants and ${cells.length} cells...`);
@@ -804,6 +807,20 @@ export class Garden {
             : inferredLastSavedTime;
 
         this.globalLastTickTime = lastSavedTime;
+
+        // Resolve garden birth epoch:
+        // Priority: explicit DB field > oldest plant created_at fallback
+        if (gardenBornAt != null) {
+            this.gardenBornAt = gardenBornAt;
+        } else if (minTime < Date.now()) {
+            // Use the oldest plant as a fallback and persist it
+            this.gardenBornAt = minTime;
+            const bornIso = new Date(minTime).toISOString();
+            supabase.from('garden_state').upsert({ id: 1, garden_born_at: bornIso }).then(({ error }) => {
+                if (error) console.error('[Garden] Failed to persist garden_born_at:', error.message);
+                else console.log('[Garden] garden_born_at persisted from oldest plant:', bornIso);
+            });
+        }
 
         this.plantCounter = maxId;
         this.realPlantCount = records.length;
@@ -1040,12 +1057,19 @@ export class Garden {
 
 
     public getStats() {
+        // Virtual days = real calendar days elapsed since the garden was born
+        let virtualDays = 0;
+        if (this.gardenBornAt !== null) {
+            const msElapsed = Date.now() - this.gardenBornAt;
+            virtualDays = Math.floor(msElapsed / 86400000);
+        }
+
         return {
             totalPlantsBorn: this.realPlantCount,
             activePlants: this.plantRegistry.size,
             uniqueSpecies: this.uniqueSpeciesSet.size,
             sunPosition: 0,
-            virtualDays: 0,
+            virtualDays,
             cells: { ...this.cellCounts }
         };
     }

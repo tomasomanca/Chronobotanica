@@ -50,8 +50,9 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
 
     // --- SUPABASE LOAD ---
     const loadPlants = async () => {
-      // 1. Fetch exact global time
+      // 1. Fetch exact global time and garden birth epoch
       let lastTickTime: number | null = null;
+      let gardenBornAt: number | null = null;
       const { data: stateData, error: stateError } = await supabase
         .from('garden_state')
         .select('*')
@@ -60,6 +61,9 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
 
       if (!stateError && stateData) {
         lastTickTime = new Date(stateData.last_tick_time).getTime();
+        if (stateData.garden_born_at) {
+          gardenBornAt = new Date(stateData.garden_born_at).getTime();
+        }
       }
 
       const { data, error } = await supabase
@@ -89,7 +93,7 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
       }
 
       const cells = cellData || [];
-      await garden.loadFromDatabase(records, cells, lastTickTime);
+      await garden.loadFromDatabase(records, cells, lastTickTime, gardenBornAt);
     };
 
     garden.onPlantBorn = async (id, dna, x, z) => {
@@ -162,7 +166,7 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
       const stats = gardenRef.current.getStats();
       const degrees = Math.round((cycle / (Math.PI * 2)) * 360) % 360;
       stats.sunPosition = degrees;
-      stats.virtualDays = Math.floor(sunTimerRef.current / (Math.PI * 2));
+      // virtualDays is now computed from gardenBornAt inside getStats()
       onDebugStats(stats);
     }
 
