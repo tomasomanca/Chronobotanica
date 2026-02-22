@@ -861,48 +861,72 @@ export class Garden {
         if (lastSavedTime !== null && now > lastSavedTime) {
             const msPassed = now - lastSavedTime;
 
-            // Try to acquire catchup lock (expires after 60s)
-            const lockExpiry = new Date(Date.now() - 60000).toISOString();
-            const { data: lockData } = await supabase
+            // Read current lock state
+            const { data: stateRow } = await supabase
                 .from('garden_state')
-                .update({ catchup_locked_at: new Date().toISOString() })
+                .select('catchup_locked_at')
                 .eq('id', 1)
-                .or(`catchup_locked_at.is.null,catchup_locked_at.lt.${lockExpiry}`)
-                .select();
+                .single();
 
-            if (!lockData || lockData.length === 0) {
-                console.log('[Garden] Catchup skipped (locked by another client)');
+            const lockAge = stateRow?.catchup_locked_at
+                ? Date.now() - new Date(stateRow.catchup_locked_at).getTime()
+                : Infinity; // No lock = treat as expired
+
+            const LOCK_EXPIRY_MS = 15000; // 15 seconds
+
+            if (lockAge < LOCK_EXPIRY_MS) {
+                console.log(`[Garden] Catchup skipped (lock is ${Math.round(lockAge / 1000)}s old, expires after ${LOCK_EXPIRY_MS / 1000}s)`);
             } else {
-                console.log(`[Garden] Simulating ${msPassed}ms of missed time...`);
+                // Acquire lock
+                await supabase.from('garden_state').update({ catchup_locked_at: new Date().toISOString() }).eq('id', 1);
 
-                // Save and restore sun position after catch-up
-                const savedSun = { ...this.sunPosition };
-                this.simulationTime = lastSavedTime;
-                this.isCatchingUp = true;
-                this.config.growthRate = 1.0; // Enable seeding during catch-up
+                try {
+                    console.log(`[Garden] Simulating ${msPassed}ms of missed time...`);
 
-                const exactMsAdvanced = this.catchUpTime(msPassed);
+                    // Save and restore sun position after catch-up
+                    const savedSun = { ...this.sunPosition };
+                    this.simulationTime = lastSavedTime;
+                    this.isCatchingUp = true;
+                    this.config.growthRate = 1.0; // Enable seeding during catch-up
 
-                this.isCatchingUp = false;
-                this.simulationTime = null;
-                this.sunPosition = savedSun;
+                    const exactMsAdvanced = this.catchUpTime(msPassed);
 
-                // Flush buffered plants and cells to DB
-                await this.flushPendingToDatabase();
+                    this.isCatchingUp = false;
+                    this.simulationTime = null;
+                    this.sunPosition = savedSun;
 
-                // Save exactly advanced global time + release lock
-                if (exactMsAdvanced > 0) {
-                    this.globalLastTickTime = lastSavedTime + exactMsAdvanced;
-                    const newGlobalTime = new Date(this.globalLastTickTime).toISOString();
-                    const { error } = await supabase.from('garden_state').upsert({
-                        id: 1,
-                        last_tick_time: newGlobalTime,
-                        catchup_locked_at: null
+                    console.log(`[Garden] Catch-up complete: ${exactMsAdvanced}ms advanced, ${this.pendingPlants.length} new plants, ${this.pendingCells.length} new cells buffered.`);
+
+                    // Flush buffered plants and cells to DB
+                    await this.flushPendingToDatabase();
+
+                    // Save exactly advanced global time + release lock
+                    if (exactMsAdvanced > 0) {
+                        this.globalLastTickTime = lastSavedTime + exactMsAdvanced;
+                        const newGlobalTime = new Date(this.globalLastTickTime).toISOString();
+                        const { error } = await supabase.from('garden_state').upsert({
+                            id: 1,
+                            last_tick_time: newGlobalTime,
+                            catchup_locked_at: null
+                        });
+                        if (error) console.error('[Garden] Failed to update global time:', error.message);
+                        else console.log(`[Garden] Global time updated to ${newGlobalTime}, lock released.`);
+                    } else {
+                        await supabase.from('garden_state').update({ catchup_locked_at: null }).eq('id', 1);
+                        console.log('[Garden] No ticks advanced, lock released.');
+                    }
+                } catch (catchupError) {
+                    console.error('[Garden] CATCH-UP CRASHED:', catchupError);
+                    this.isCatchingUp = false;
+                    this.simulationTime = null;
+                    this.pendingPlants = [];
+                    this.pendingCells = [];
+                } finally {
+                    // ALWAYS release the lock, even if catch-up crashed
+                    await supabase.from('garden_state').update({ catchup_locked_at: null }).eq('id', 1).then(({ error }) => {
+                        if (error) console.error('[Garden] Failed to release lock in finally:', error.message);
+                        else console.log('[Garden] Lock released (finally block).');
                     });
-                    if (error) console.error('[Garden] Failed to update global time:', error.message);
-                } else {
-                    // Release lock even if no ticks advanced
-                    await supabase.from('garden_state').update({ catchup_locked_at: null }).eq('id', 1);
                 }
             }
         }
