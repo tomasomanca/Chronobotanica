@@ -31,12 +31,12 @@ Every plant is born with a unique hexadecimal string (e.g., `0xA3F1...`). This s
 
 | Hex Pair | Gene | Effect |
 | :--- | :--- | :--- |
-| **0-2** | `branchBias` | **Ramification**: Probability of the stem splitting into branches. |
-| **2-4** | `sunSensitivity` | **Heliotropism & Height**: How strongly the plant seeks sunlight and its potential maximum height. |
-| **4-6** | `leafDensity` | **Foliage**: Frequency of leaf generation along the stem. |
-| **6-8** | `leafSize` | **Size**: Volume of leaf clusters. |
-| **8-10** | `colorHue` | **Base Hue**: Determines the dominant color of the flower. |
-| **10-12** | `colorVar` | **Saturation/Variance**: Influences the vibrancy of stem and leaf colors. |
+| **0–1** | `branchBias` | **Ramification**: Probability of the stem splitting into branches. |
+| **2–3** | `sunSensitivity` | **Heliotropism & Height**: How strongly the plant seeks sunlight and its potential maximum height. |
+| **4–5** | `leafDensity` | **Foliage**: Frequency of leaf generation along the stem. |
+| **6–7** | `leafSize` | **Size**: Volume of leaf clusters. |
+| **8–9** | `colorHue` | **Base Hue**: Determines the dominant color of the flower. |
+| **10–11** | `colorVar` | **Saturation/Variance**: Influences the vibrancy of stem and leaf colors. |
 | **Last 3** | `vigor` | **Metabolism**: Growth speed and overall longevity. |
 
 ### 2. Generative Aesthetics
