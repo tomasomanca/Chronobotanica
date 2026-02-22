@@ -42,7 +42,7 @@ export class Garden {
     public config: GardenConfig;
     public sunPosition: { x: number, y: number, z: number };
     public playbackTime: number; // TImestamp for visual replay
-    public onPlantBorn?: (id: number, dna: string, x: number, z: number) => Promise<void> | void;
+    public onPlantBorn?: (id: number, dna: string, x: number, z: number, created_at?: string) => Promise<void> | void;
 
     private plantCounter = 0;
     private realPlantCount = 0;
@@ -53,8 +53,8 @@ export class Garden {
     // Catch-up state: buffer DB writes during offline simulation
     private isCatchingUp = false;
     private globalLastTickTime: number | null = null;
-    private pendingPlants: { id: number, dna: string, x: number, z: number }[] = [];
-    private pendingCells: { plant_id: number | null, x: number, y: number, z: number, type: number }[] = [];
+    private pendingPlants: { id: number, dna: string, x: number, z: number, created_at: string }[] = [];
+    private pendingCells: { plant_id: number | null, x: number, y: number, z: number, type: number, created_at: string }[] = [];
 
     // Garden epoch: timestamp of when the garden was first born (persists across reloads)
     public gardenBornAt: number | null = null;
@@ -200,7 +200,7 @@ export class Garden {
 
             // Save to Database (skip during time travel, buffer during catch-up)
             if (this.isCatchingUp) {
-                this.pendingCells.push({ plant_id: cell.plantId, x: cell.x, y: cell.y, z: cell.z, type: cell.type });
+                this.pendingCells.push({ plant_id: cell.plantId, x: cell.x, y: cell.y, z: cell.z, type: cell.type, created_at: cell.birthTime });
             } else if (this.config.growthRate <= 1.0) {
                 this.saveNewCell(cell);
             }
@@ -322,7 +322,8 @@ export class Garden {
         // Save plant record FIRST (skip during time travel, buffer during catch-up)
         if (forcedId === undefined) {
             if (this.isCatchingUp) {
-                this.pendingPlants.push({ id, dna, x, z });
+                const now = birthTime ? new Date(birthTime) : new Date(this.timeNow);
+                this.pendingPlants.push({ id, dna, x, z, created_at: now.toISOString() });
             } else if (this.onPlantBorn && this.config.growthRate <= 1.0) {
                 await this.onPlantBorn(id, dna, x, z);
             }
@@ -1053,7 +1054,7 @@ export class Garden {
         // Save plants first (FK dependency)
         if (this.pendingPlants.length > 0 && this.onPlantBorn) {
             for (const p of this.pendingPlants) {
-                await this.onPlantBorn(p.id, p.dna, p.x, p.z);
+                await this.onPlantBorn(p.id, p.dna, p.x, p.z, p.created_at);
             }
             console.log(`[Garden] Flushed ${this.pendingPlants.length} plants to DB.`);
             this.pendingPlants = [];

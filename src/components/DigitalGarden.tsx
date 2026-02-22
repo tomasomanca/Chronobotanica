@@ -96,8 +96,10 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
       await garden.loadFromDatabase(records, cells, lastTickTime, gardenBornAt);
     };
 
-    garden.onPlantBorn = async (id, dna, x, z) => {
-      const { error } = await supabase.from('plants').insert({ id, dna, x, z });
+    garden.onPlantBorn = async (id, dna, x, z, created_at) => {
+      const payload: any = { id, dna, x, z };
+      if (created_at) payload.created_at = created_at;
+      const { error } = await supabase.from('plants').insert(payload);
       if (error) console.error('Failed to save plant:', error.message);
     };
 
