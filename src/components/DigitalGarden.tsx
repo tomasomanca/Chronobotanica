@@ -84,16 +84,20 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
         return;
       }
 
-      const { data: cellData, error: cellError } = await supabase
-        .from('plant_cells')
-        .select('*')
-        .limit(500000);
-
-      if (cellError) {
-        console.error('Error loading cells:', cellError);
+      const cells: any[] = [];
+      const PAGE = 1000;
+      let from = 0;
+      while (true) {
+        const { data: batch, error: cellError } = await supabase
+          .from('plant_cells')
+          .select('*')
+          .range(from, from + PAGE - 1);
+        if (cellError) { console.error('Error loading cells:', cellError); break; }
+        if (!batch || batch.length === 0) break;
+        cells.push(...batch);
+        if (batch.length < PAGE) break;
+        from += PAGE;
       }
-
-      const cells = cellData || [];
       await garden.loadFromDatabase(records, cells, lastTickTime, gardenBornAt);
     };
 
