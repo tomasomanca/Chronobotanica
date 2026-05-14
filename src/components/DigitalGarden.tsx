@@ -86,7 +86,8 @@ const DigitalGarden: React.FC<DigitalGardenProps> = ({ timeScale, onHover, onSun
 
       const { data: cellData, error: cellError } = await supabase
         .from('plant_cells')
-        .select('*');
+        .select('*')
+        .limit(500000);
 
       if (cellError) {
         console.error('Error loading cells:', cellError);
