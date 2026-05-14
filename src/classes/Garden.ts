@@ -446,6 +446,7 @@ export class Garden {
 
             if (state.indices.length === 0) {
                 state.phase = 'LEGACY';
+                this.persistPlantDeath(plantId, null);
                 continue;
             }
 
@@ -557,7 +558,8 @@ export class Garden {
 
                     state.indices = seedIdx !== -1 ? [seedIdx] : [];
                     state.phase = 'LEGACY';
-
+                    const ashCell = seedIdx !== -1 ? this.grid.get(seedIdx) ?? null : null;
+                    this.persistPlantDeath(plantId, ashCell);
                 }
             }
         }
@@ -1051,25 +1053,99 @@ export class Garden {
 
     // Batch-save all plants and cells buffered during catch-up
     private async flushPendingToDatabase() {
-        // Save plants first (FK dependency)
-        if (this.pendingPlants.length > 0 && this.onPlantBorn) {
-            for (const p of this.pendingPlants) {
-                await this.onPlantBorn(p.id, p.dna, p.x, p.z, p.created_at);
+        if (this.pendingPlants.length === 0 && this.pendingCells.length === 0) return;
+
+        // Which plants actually grew at least one cell during catch-up
+        const plantsWithCells = new Set(
+            this.pendingCells.filter(c => c.plant_id !== null).map(c => c.plant_id as number)
+        );
+
+        const toSaveAlive: typeof this.pendingPlants = [];
+        const toSaveAsAsh: typeof this.pendingPlants = [];
+        const zombieIds = new Set<number>();
+
+        for (const p of this.pendingPlants) {
+            const state = this.plantRegistry.get(p.id);
+            if (!plantsWithCells.has(p.id)) {
+                // Never grew a single cell → zombie, discard
+                zombieIds.add(p.id);
+                this.plantRegistry.delete(p.id);
+                this.realPlantCount--;
+            } else if (state?.phase === 'LEGACY') {
+                toSaveAsAsh.push(p);
+            } else {
+                toSaveAlive.push(p);
             }
-            console.log(`[Garden] Flushed ${this.pendingPlants.length} plants to DB.`);
-            this.pendingPlants = [];
+        }
+        this.pendingPlants = [];
+
+        if (zombieIds.size > 0) {
+            console.log(`[Garden] Skipped ${zombieIds.size} zombie plants (no cells grown).`);
         }
 
-        // Batch-insert cells
-        if (this.pendingCells.length > 0) {
-            const { error } = await supabase.from('plant_cells').insert(this.pendingCells);
-            if (error) {
-                console.error('[Garden] Batch cell insert failed:', error.message);
-            } else {
-                console.log(`[Garden] Flushed ${this.pendingCells.length} cells to DB.`);
+        // Save alive plants (FK first)
+        if (toSaveAlive.length > 0 && this.onPlantBorn) {
+            for (const p of toSaveAlive) {
+                await this.onPlantBorn(p.id, p.dna, p.x, p.z, p.created_at);
             }
-            this.pendingCells = [];
+            console.log(`[Garden] Flushed ${toSaveAlive.length} alive plants to DB.`);
         }
+
+        // Save ash plants directly with status='ash'
+        if (toSaveAsAsh.length > 0) {
+            const ashPlantRows = toSaveAsAsh.map(p => ({ id: p.id, dna: p.dna, x: p.x, z: p.z, status: 'ash', created_at: p.created_at }));
+            const { error } = await supabase.from('plants').insert(ashPlantRows);
+            if (error) console.error('[Garden] Failed to save ash plants:', error.message);
+            else console.log(`[Garden] Flushed ${toSaveAsAsh.length} ash plants to DB.`);
+        }
+
+        // For ash plants from catch-up: save only their current ash cell from memory
+        const ashPlantIds = new Set(toSaveAsAsh.map(p => p.id));
+        const catchupAshCells: typeof this.pendingCells = [];
+        for (const p of toSaveAsAsh) {
+            const state = this.plantRegistry.get(p.id);
+            if (state && state.indices.length > 0) {
+                const ashCell = this.grid.get(state.indices[0]);
+                if (ashCell && ashCell.type === CellType.ASH) {
+                    catchupAshCells.push({ plant_id: p.id, x: ashCell.x, y: ashCell.y, z: ashCell.z, type: CellType.ASH, created_at: new Date().toISOString() });
+                }
+            }
+        }
+
+        // Batch-insert cells: skip zombies and ash-plant intermediate cells
+        const validCells = [
+            ...this.pendingCells.filter(c => c.plant_id === null || (!zombieIds.has(c.plant_id) && !ashPlantIds.has(c.plant_id))),
+            ...catchupAshCells
+        ];
+        this.pendingCells = [];
+
+        if (validCells.length > 0) {
+            const { error } = await supabase.from('plant_cells').insert(validCells);
+            if (error) console.error('[Garden] Batch cell insert failed:', error.message);
+            else console.log(`[Garden] Flushed ${validCells.length} cells to DB.`);
+        }
+    }
+
+    private persistPlantDeath(plantId: number, ashCell: GridCell | null): void {
+        if (this.isCatchingUp || this.config.growthRate > 1.0) return;
+
+        (async () => {
+            const { error: statusErr } = await supabase.from('plants').update({ status: 'ash' }).eq('id', plantId);
+            if (statusErr) { console.error(`[Garden] Failed to set plant ${plantId} ash status:`, statusErr.message); return; }
+
+            const { error: deleteErr } = await supabase.from('plant_cells').delete().eq('plant_id', plantId);
+            if (deleteErr) { console.error(`[Garden] Failed to delete cells for plant ${plantId}:`, deleteErr.message); return; }
+
+            if (ashCell) {
+                const { error: insertErr } = await supabase.from('plant_cells').insert({
+                    plant_id: plantId, x: ashCell.x, y: ashCell.y, z: ashCell.z,
+                    type: CellType.ASH, created_at: new Date().toISOString()
+                });
+                if (insertErr) console.error(`[Garden] Failed to insert ash cell for plant ${plantId}:`, insertErr.message);
+            }
+
+            console.log(`[Garden] Plant ${plantId} death persisted (status=ash, cells replaced with seed).`);
+        })().catch(err => console.error('[Garden] persistPlantDeath error:', err));
     }
 
     private spawnAshOnly(record: { dna: string, x: number, z: number }, birthTime?: string) {
