@@ -134,24 +134,9 @@ export class Garden {
                 }
             }
 
-            // 3. Update Growth
-            const tips = Array.from(this.activeTips.values());
-            // Randomize order slightly for organic feel
-            if (tips.length > 0) {
-                // Optimization: shuffle only if needed or just iterate
-                // For catch-up speed, we can skip shuffle or do a simple one
-                for (let j = tips.length - 1; j > 0; j--) {
-                    const k = Math.floor(Math.random() * (j + 1));
-                    [tips[j], tips[k]] = [tips[k], tips[j]];
-                }
-            }
-
-            const processCount = Math.min(tips.length, 60);
-            for (let t = 0; t < processCount; t++) {
-                const tip = tips[t];
-                if (tip && this.activeTips.has(tip.idx)) {
-                    this.processTip(tip.idx);
-                }
+            // 3. Update Growth — every tip is processed every tick (independent per-plant energy)
+            for (const [idx] of this.activeTips) {
+                this.processTip(idx);
             }
 
             // 4. Update Lifecycle
@@ -387,16 +372,9 @@ export class Garden {
             }
         }
 
-        // 3. Update Growth
-        const tips = Array.from(this.activeTips.values());
-        tips.sort(() => Math.random() - 0.5);
-        const processCount = Math.min(tips.length, 60);
-
-        for (let i = 0; i < processCount; i++) {
-            const tip = tips[i];
-            if (tip && this.activeTips.has(tip.idx)) {
-                this.processTip(tip.idx);
-            }
+        // 3. Update Growth — every tip is processed every tick (independent per-plant energy)
+        for (const [idx] of this.activeTips) {
+            this.processTip(idx);
         }
 
         // 4. Update Lifecycle
