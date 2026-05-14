@@ -1091,7 +1091,7 @@ export class Garden {
 
         return {
             totalPlantsBorn: this.realPlantCount,
-            activePlants: this.plantRegistry.size,
+            activePlants: [...this.plantRegistry.values()].filter(s => s.phase !== 'LEGACY').length,
             uniqueSpecies: this.uniqueSpeciesSet.size,
             sunPosition: 0,
             virtualDays,
