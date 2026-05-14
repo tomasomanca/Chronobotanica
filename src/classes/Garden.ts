@@ -793,8 +793,9 @@ export class Garden {
                     this.uniqueSpeciesSet.add(record.dna);
                     maxId = Math.max(maxId, record.id);
                 } else {
-                    // If it's ash, we still need to place it on the grid
+                    // If it's ash, place it on the grid and register as LEGACY so rebirth can work
                     this.spawnAshOnly(record, record.created_at);
+                    maxId = Math.max(maxId, record.id);
                 }
             }
             // Track the latest creation time among loaded plants
@@ -1148,11 +1149,28 @@ export class Garden {
         })().catch(err => console.error('[Garden] persistPlantDeath error:', err));
     }
 
-    private spawnAshOnly(record: { dna: string, x: number, z: number }, birthTime?: string) {
+    private spawnAshOnly(record: { id: number, dna: string, x: number, z: number }, birthTime?: string) {
         const idx = this.getIndex(record.x, 0, record.z);
         if (idx !== -1 && !this.grid.has(idx)) {
             const genotype = this.parseDNA(record.dna);
-            this.createCell(idx, record.x, 0, record.z, CellType.ASH, null, record.dna, genotype, birthTime);
+
+            // Register as LEGACY so the rebirth loop can find this plant
+            this.plantRegistry.set(record.id, {
+                id: record.id,
+                indices: [],
+                phase: 'LEGACY',
+                individualMaxHeight: 0,
+                crystallizationDelay: 0,
+                vigor: 1,
+                dna: record.dna,
+                genotype,
+                center: { x: record.x, y: 0, z: record.z },
+                energy: 0,
+                age: 0
+            });
+            this.plantCounter = Math.max(this.plantCounter, record.id);
+
+            this.createCell(idx, record.x, 0, record.z, CellType.ASH, record.id, record.dna, genotype, birthTime);
         }
     }
 
